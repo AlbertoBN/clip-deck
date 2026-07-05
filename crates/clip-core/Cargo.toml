@@ -1,0 +1,16 @@
+[package]
+name = "clip-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+blake3.workspace = true
+mime.workspace = true
+mime_guess.workspace = true
+time.workspace = true

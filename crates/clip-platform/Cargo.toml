@@ -1,0 +1,16 @@
+[package]
+name = "clip-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+clip-core.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# Platform-specific bindings (X11, Wayland, global hotkeys) are deliberately
+# left out until the corresponding adapter is implemented; see the PRD's
+# "Recommended crate choices" table before picking versions.

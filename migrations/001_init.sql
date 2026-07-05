@@ -1,0 +1,3 @@
+-- Initial schema: clips, clip_representations, clips_fts, groups, app_rules,
+-- settings, events. See the "Proposed SQLite migration file" section of
+-- docs/ClipDeck-ubuntu-clipboard-manager-prd.md for the full DDL.
