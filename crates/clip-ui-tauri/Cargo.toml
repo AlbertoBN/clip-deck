@@ -1,0 +1,21 @@
+[package]
+name = "clip-ui-tauri"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "clip-ui-tauri"
+path = "src/main.rs"
+
+[dependencies]
+clip-core.workspace = true
+clip-ipc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = "2"
+
+# `build.rs` (tauri-build), `tauri.conf.json`, and the React/TS frontend under
+# `src/` are intentionally not scaffolded yet — run `cargo tauri init` once the
+# Tauri CLI is available rather than hand-authoring that config.

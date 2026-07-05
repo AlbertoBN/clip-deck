@@ -1,0 +1,31 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Rust workspace (see /Cargo.toml and CLAUDE.md) + Tauri 2 / React / TypeScript UI shell.
+  Product: ClipDeck, a Linux clipboard manager for Ubuntu inspired by Ditto. Source of truth for
+  product requirements is docs/ClipDeck-ubuntu-clipboard-manager-prd.md - consult it directly for
+  schema DDL, the full IPC command/event list, and milestone acceptance criteria.
+  Crate boundaries (do not blur these):
+    - clip-core: domain models, MIME normalization, content hashing, search query helpers, config, errors.
+    - clip-store: SQLite persistence (rusqlite), migrations, FTS5 sync, groups, rules, events, retention.
+    - clip-ipc: Unix-socket protocol/DTOs, server, client, local-only auth.
+    - clip-platform: ClipboardBackend trait with separate x11/ and wayland/ adapters, hotkeys, focus,
+      paste, tray_support, diagnostics. x11 and wayland must stay behind one trait with explicit
+      capabilities() reporting - never assume feature parity.
+    - clipd: daemon binary - watch loop, ingest pipeline, IPC command handlers, background jobs.
+    - clip-ui-tauri: Tauri host + React/TS frontend - popup, manager, settings, tray.
+  Design invariants: a clip has multiple representations (do not collapse to one format field);
+  large binaries live on disk referenced by blob_path; dedup is by blake3 content hash + MIME type.
+  Build order (later crates depend on earlier ones being stable): clip-core -> clip-store -> clip-ipc
+  -> clip-platform::x11 -> clipd -> clip-ui-tauri -> clip-platform::rich -> clip-platform::wayland.
+
+rules:
+  proposal:
+    - "State which crate(s) in the Cargo workspace this change touches and where it sits in the PRD's build order / milestone list."
+  design:
+    - "Include a \"Test strategy\" subsection per component that states the TDD approach - which tests are written first (unit/integration), the red-green-refactor loop to follow, and how the crate's existing test suite (cargo test) will gate the change."
+    - "Do not propose an implementation approach without first describing the failing tests that would characterize it."
+  tasks:
+    - "This project is built strict TDD. Every implementation task MUST be split into explicit sub-steps in this order, each its own checklist item - (1) write a failing test that specifies the desired behavior, (2) run it and confirm it fails for the expected reason, (3) implement the minimum code to make it pass, (4) run the full crate test suite and confirm green, (5) refactor if needed while keeping tests green. Never write a task that adds implementation code without a preceding task that adds its test."
+    - "Group tasks by crate/module in the PRD's build order; call out cross-crate dependencies explicitly (e.g. requires clip-core's Clip model from clip-core-foundations)."
+    - "Reference concrete file paths under crates/<crate>/src/ from the existing scaffold (see CLAUDE.md / Cargo.toml) rather than inventing new structure."

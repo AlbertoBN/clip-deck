@@ -1,0 +1,22 @@
+[package]
+name = "clipd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "clipd"
+path = "src/main.rs"
+
+[dependencies]
+clip-core.workspace = true
+clip-store.workspace = true
+clip-platform.workspace = true
+clip-ipc.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+directories.workspace = true

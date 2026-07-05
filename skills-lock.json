@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "rust-expert": {
+      "source": "personamanagmentlayer/pcl",
+      "sourceType": "github",
+      "skillPath": "stdlib/languages/rust-expert/SKILL.md",
+      "computedHash": "1065ebf536486a54f13273c8c70447122834dfc6c1af2d29ac4fad5654fe423e"
+    }
+  }
+}
