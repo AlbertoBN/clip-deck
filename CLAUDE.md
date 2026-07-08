@@ -89,6 +89,40 @@ The PRD specifies an intentional delivery order because later crates depend on e
 baseline for end-to-end tests; Wayland is deliberately deferred to its own milestone due to inconsistent
 compositor support for automation.
 
+## Development workflow: Test-Driven Development (mandatory)
+
+This project is built strict TDD. This applies to every code change in this repo — bug fixes, new
+features, refactors — not only work started from an OpenSpec change.
+
+For every unit of behavior, follow this loop and do not skip or reorder steps:
+
+1. **Red** — write a test that specifies the desired behavior before writing the implementation. For a
+   bug fix, the test is a regression test that reproduces the bug.
+2. **Confirm the failure** — run the test (or the crate's test module) and confirm it fails for the
+   expected reason (missing type/function, wrong behavior) — not a typo or unrelated compile error.
+3. **Green** — write the minimum code needed to make the test pass. Resist adding behavior the current
+   test doesn't require.
+4. **Confirm the suite is green** — run the full crate's test suite (`cargo test -p <crate>`), not just
+   the new test, before moving on.
+5. **Refactor** — clean up only while the suite stays green; re-run tests after refactoring.
+
+Rules that follow from this:
+
+- Never write implementation code without a preceding failing test that specifies it. If you catch
+  yourself about to add a function/struct/branch with no test driving it, stop and write the test first.
+- One logical behavior per red-green cycle — don't batch several behaviors behind one test.
+- Before reporting any implementation task as done, run, at minimum:
+  - `cargo test -p <crate>` for every crate you touched
+  - `cargo check --workspace` (catches breakage in dependent crates)
+  - `cargo clippy -p <crate> --all-targets -- -D warnings`
+- When working through an OpenSpec change's `tasks.md`, each task is already written as an explicit
+  red/green sub-step (see `openspec/config.yaml`'s `rules.tasks`) — follow the checklist as written rather
+  than collapsing steps together, and check off `- [ ]` → `- [x]` only once that step's tests are green.
+- Prefer fakes/dependency-injected test doubles over real OS/network/display-server state so logic is
+  unit-testable (see any `design.md`'s "Test strategy" section for the fake used in that change, e.g.
+  `X11Connection`, `Store`/`Backend`/`EventPublisher`); reserve real integration (`#[ignore]`d tests, manual
+  verification) for the small surface that can't be faked.
+
 ## Reference
 
 For full schema (migration SQL), the IPC command/event list, and the milestone-by-milestone acceptance

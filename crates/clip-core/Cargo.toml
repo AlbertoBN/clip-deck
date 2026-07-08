@@ -14,3 +14,4 @@ blake3.workspace = true
 mime.workspace = true
 mime_guess.workspace = true
 time.workspace = true
+directories.workspace = true
