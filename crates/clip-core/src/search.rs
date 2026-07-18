@@ -46,7 +46,7 @@ pub fn parse_query(input: &str) -> ParsedQuery {
     ParsedQuery { terms, ranking: RankingInputs::default() }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct SearchFilters {
     pub mime_family: Option<crate::mime::MimeFamily>,
     pub pinned_only: bool,
