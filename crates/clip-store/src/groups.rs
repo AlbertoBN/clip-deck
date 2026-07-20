@@ -47,6 +47,13 @@ pub fn rename(conn: &Connection, id: &str, name: &str) -> Result<(), StoreError>
     Ok(())
 }
 
+/// Lists every group, regardless of nesting.
+pub fn list_all(conn: &Connection) -> Result<Vec<Group>, StoreError> {
+    let mut stmt = conn.prepare("SELECT id, name, parent_group_id, sort_order FROM groups")?;
+    let groups = stmt.query_map([], row_to_group)?.collect::<Result<Vec<_>, _>>()?;
+    Ok(groups)
+}
+
 /// Lists the direct children of `parent_id`, or top-level groups when `None`.
 pub fn list_children(conn: &Connection, parent_id: Option<&str>) -> Result<Vec<Group>, StoreError> {
     let mut stmt = conn.prepare(
@@ -101,6 +108,18 @@ mod tests {
         assert!(ids.contains(&"ssh"));
         assert!(ids.contains(&"sql"));
         assert!(!ids.contains(&"prod"));
+    }
+
+    #[test]
+    fn listing_all_groups_includes_nested_and_top_level() {
+        let conn = crate::db::open(":memory:").unwrap();
+        insert(&conn, &Group::new("work", "Work", None).unwrap()).unwrap();
+        insert(&conn, &Group::new("ssh", "SSH", Some("work".to_string())).unwrap()).unwrap();
+        let all = list_all(&conn).unwrap();
+        let ids: Vec<_> = all.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&"work"));
+        assert!(ids.contains(&"ssh"));
     }
 
     #[test]

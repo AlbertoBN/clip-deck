@@ -5,6 +5,7 @@ pub mod fts;
 pub mod groups;
 pub mod retention;
 pub mod rules;
+pub mod settings;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {

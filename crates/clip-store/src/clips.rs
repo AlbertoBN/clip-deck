@@ -172,6 +172,42 @@ pub fn set_pinned(conn: &Connection, id: &str, pinned: bool) -> Result<(), Store
     Ok(())
 }
 
+/// Fetches the active (non-deleted) clip with the given content hash and
+/// MIME type, if one exists - the counterpart lookup for a dedup conflict.
+pub fn get_by_hash(conn: &Connection, content_hash: &str, primary_mime: &str) -> Result<Option<Clip>, StoreError> {
+    let clip = conn
+        .query_row(
+            &format!("SELECT {CLIP_COLUMNS} FROM clips WHERE content_hash = ?1 AND primary_mime = ?2 AND is_deleted = 0"),
+            params![content_hash, primary_mime],
+            row_to_clip,
+        )
+        .optional()?;
+    let Some(mut clip) = clip else {
+        return Ok(None);
+    };
+    clip.representations = get_representations(conn, &clip.id)?;
+    Ok(Some(clip))
+}
+
+/// Updates a clip's `last_used_at` to the current time (e.g. on paste, or
+/// when a dedup conflict means an existing clip was "re-copied").
+pub fn touch_last_used(conn: &Connection, id: &str) -> Result<(), StoreError> {
+    conn.execute(
+        "UPDATE clips SET last_used_at = ?1, updated_at = ?1 WHERE id = ?2",
+        params![to_rfc3339(time::OffsetDateTime::now_utc()), id],
+    )?;
+    Ok(())
+}
+
+/// Updates only a clip's group assignment (and `updated_at`).
+pub fn set_group(conn: &Connection, id: &str, group_id: Option<&str>) -> Result<(), StoreError> {
+    conn.execute(
+        "UPDATE clips SET group_id = ?1, updated_at = ?2 WHERE id = ?3",
+        params![group_id, to_rfc3339(time::OffsetDateTime::now_utc()), id],
+    )?;
+    Ok(())
+}
+
 /// Soft-deletes a clip by setting `is_deleted = 1`.
 pub fn soft_delete(conn: &Connection, id: &str) -> Result<(), StoreError> {
     conn.execute(
@@ -225,6 +261,51 @@ mod tests {
         let listed = list(&conn).unwrap();
         assert!(listed.is_empty());
         assert!(get(&conn, "c1").unwrap().is_some());
+    }
+
+    #[test]
+    fn get_by_hash_finds_the_active_clip_with_that_content_hash_and_mime() {
+        let conn = crate::db::open(":memory:").unwrap();
+        insert(&conn, &new_clip("c1", "abc", "text/plain")).unwrap();
+        let fetched = get_by_hash(&conn, "abc", "text/plain").unwrap().unwrap();
+        assert_eq!(fetched.id, "c1");
+    }
+
+    #[test]
+    fn get_by_hash_ignores_soft_deleted_clips() {
+        let conn = crate::db::open(":memory:").unwrap();
+        insert(&conn, &new_clip("c1", "abc", "text/plain")).unwrap();
+        soft_delete(&conn, "c1").unwrap();
+        assert!(get_by_hash(&conn, "abc", "text/plain").unwrap().is_none());
+    }
+
+    #[test]
+    fn touching_last_used_sets_it_to_a_recent_time() {
+        let conn = crate::db::open(":memory:").unwrap();
+        insert(&conn, &new_clip("c1", "abc", "text/plain")).unwrap();
+        touch_last_used(&conn, "c1").unwrap();
+        let fetched = get(&conn, "c1").unwrap().unwrap();
+        let last_used = fetched.last_used_at.expect("last_used_at should be set");
+        assert!(time::OffsetDateTime::now_utc() - last_used < time::Duration::seconds(5));
+    }
+
+    #[test]
+    fn setting_a_clips_group_updates_only_the_group_id() {
+        let conn = crate::db::open(":memory:").unwrap();
+        insert_test_group(&conn, "g1");
+        insert(&conn, &new_clip("c1", "abc", "text/plain")).unwrap();
+        set_group(&conn, "c1", Some("g1")).unwrap();
+        let fetched = get(&conn, "c1").unwrap().unwrap();
+        assert_eq!(fetched.group_id, Some("g1".to_string()));
+        assert_eq!(fetched.content_hash, "abc");
+    }
+
+    fn insert_test_group(conn: &Connection, id: &str) {
+        conn.execute(
+            "INSERT INTO groups (id, name, created_at) VALUES (?1, 'Work', '2024-01-01T00:00:00Z')",
+            [id],
+        )
+        .unwrap();
     }
 
     #[test]

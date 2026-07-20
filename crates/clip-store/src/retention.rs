@@ -33,6 +33,19 @@ pub fn clear(conn: &Connection, scope: ClearScope) -> Result<usize, StoreError> 
     Ok(deleted)
 }
 
+/// Clears history per the given scope, like `clear`, but returns the ids of
+/// the clips actually removed (so callers can publish a per-clip event).
+pub fn clear_with_ids(conn: &Connection, scope: ClearScope) -> Result<Vec<String>, StoreError> {
+    let where_clause = match scope {
+        ClearScope::All => "",
+        ClearScope::ExcludingPinned => " WHERE is_pinned = 0",
+    };
+    let mut stmt = conn.prepare(&format!("SELECT id FROM clips{where_clause}"))?;
+    let ids: Vec<String> = stmt.query_map([], |row| row.get(0))?.collect::<Result<Vec<_>, _>>()?;
+    conn.execute(&format!("DELETE FROM clips{where_clause}"), [])?;
+    Ok(ids)
+}
+
 /// Deletes a single clip by id, independent of retention or bulk clear.
 pub fn delete_clip(conn: &Connection, id: &str) -> Result<(), StoreError> {
     crate::clips::soft_delete(conn, id)
@@ -95,6 +108,16 @@ mod tests {
         clear(&conn, ClearScope::ExcludingPinned).unwrap();
         assert!(crate::clips::get(&conn, "pinned").unwrap().is_some());
         assert!(crate::clips::get(&conn, "unpinned").unwrap().is_none());
+    }
+
+    #[test]
+    fn clear_with_ids_returns_the_ids_of_removed_clips_only() {
+        let conn = crate::db::open(":memory:").unwrap();
+        crate::clips::insert(&conn, &Clip::new("pinned", "h1", "text/plain", vec![])).unwrap();
+        crate::clips::insert(&conn, &Clip::new("unpinned", "h2", "text/plain", vec![])).unwrap();
+        crate::clips::set_pinned(&conn, "pinned", true).unwrap();
+        let removed = clear_with_ids(&conn, ClearScope::ExcludingPinned).unwrap();
+        assert_eq!(removed, vec!["unpinned".to_string()]);
     }
 
     #[test]

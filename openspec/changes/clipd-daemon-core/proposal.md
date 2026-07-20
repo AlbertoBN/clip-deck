@@ -48,3 +48,26 @@ what makes Milestone 1 ("end-to-end text capture on X11") actually demoable.
   `clip-platform-x11-adapter` (all four must exist for `clipd` to compile and run).
 - Downstream: unlocks `clip-ui-tauri-shell` (a real daemon to connect to) and completes the PRD's
   Milestone 1 acceptance criteria (copy stores automatically, popup opens and pastes back, search works).
+
+### Amendment (discovered during implementation)
+
+Implementing `ipc-command-handlers` and `daemon-lifecycle` surfaced small gaps in the three dependency
+crates that this change's original scope didn't anticipate - each was a small, additive, TDD-covered
+extension to an already-completed change, not a design change to this proposal's own capabilities:
+
+- `clip-store-persistence` (`crates/clip-store/src/{clips,rules,retention,groups}.rs`, new
+  `crates/clip-store/src/settings.rs`): added `clips::touch_last_used`/`set_group`/`get_by_hash`,
+  `rules::upsert`/`delete`, `retention::clear_with_ids` (returns removed clip ids, for per-clip
+  `ClipDeleted` events), `groups::list_all`, and a `settings` key/value CRUD module - none of these
+  existed yet, but `PasteClip`, `AssignGroup`, `ClearHistory`, `SaveRule`/`DeleteRule`, `ListGroups`, and
+  `GetSettings`/`UpdateSettings` all require them per `specs/ipc-command-handlers/spec.md`.
+- `clip-ipc-transport` (`crates/clip-ipc/src/server.rs`): added `Server::run_with_shutdown`, since the
+  original transport had no graceful-drain primitive and `daemon-lifecycle`'s "in-flight command
+  completes before shutdown finishes" requirement has no way to be satisfied without one.
+- `clip-platform-x11-adapter` (`crates/clip-platform/src/paste.rs`, `src/clipboard.rs`): added
+  `PasteSimulator::paste_to_focused_window` (paste target resolved fresh at call time, since this change
+  has no popup-activation moment to capture a retained focus snapshot from) and
+  `Serialize`/`Deserialize` on `BackendCapabilities` (needed to return it from `GetDiagnostics`).
+
+Each addition has its own failing-test-first coverage in its owning crate's test suite (see that crate's
+`cargo test -p <crate>` run), not just an incidental side effect of `clipd`'s own tests.

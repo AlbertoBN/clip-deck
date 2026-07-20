@@ -89,9 +89,48 @@ impl Server {
                         return; // Reject silently: close without dispatching any command.
                     }
                 }
-                handle_connection(stream, handler, events_rx).await;
+                handle_connection(stream, handler, events_rx, None).await;
             });
         }
+    }
+
+    /// Like [`Server::run`], but stops accepting new connections once
+    /// `shutdown` resolves, then waits for every currently-executing command
+    /// handler to finish (and its response to be written) before returning -
+    /// so an in-flight command completes rather than being cut off
+    /// mid-response. Connections that are merely open and idle (waiting for
+    /// their next request) are dropped once the drain completes; they are
+    /// not "in-flight work".
+    pub async fn run_with_shutdown(self, shutdown: impl std::future::Future<Output = ()>) -> std::io::Result<()> {
+        tokio::pin!(shutdown);
+        let mut tasks = tokio::task::JoinSet::new();
+        let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        loop {
+            tokio::select! {
+                accept_result = self.listener.accept() => {
+                    let (stream, _addr) = accept_result?;
+                    let handler = self.handler.clone();
+                    let events_rx = self.events_tx.subscribe();
+                    let peer_check = self.peer_check.clone();
+                    let in_flight = in_flight.clone();
+                    tasks.spawn(async move {
+                        if let Ok(cred) = stream.peer_cred() {
+                            if !peer_check.is_allowed(cred.uid()) {
+                                return;
+                            }
+                        }
+                        handle_connection(stream, handler, events_rx, Some(in_flight)).await;
+                    });
+                }
+                _ = &mut shutdown => break,
+            }
+        }
+        while in_flight.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
+        Ok(())
     }
 }
 
@@ -101,7 +140,12 @@ async fn write_message(writer: &Mutex<tokio::net::unix::OwnedWriteHalf>, message
     w.write_all(line.as_bytes()).await
 }
 
-async fn handle_connection(stream: UnixStream, handler: HandlerFn, mut events_rx: broadcast::Receiver<Event>) {
+async fn handle_connection(
+    stream: UnixStream,
+    handler: HandlerFn,
+    mut events_rx: broadcast::Receiver<Event>,
+    in_flight: Option<Arc<std::sync::atomic::AtomicUsize>>,
+) {
     let (read_half, write_half) = stream.into_split();
     let writer = Arc::new(Mutex::new(write_half));
 
@@ -134,12 +178,19 @@ async fn handle_connection(stream: UnixStream, handler: HandlerFn, mut events_rx
                 }
                 match serde_json::from_str::<Request>(trimmed) {
                     Ok(request) => {
+                        if let Some(counter) = &in_flight {
+                            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
                         let result = (handler)(request.command).await;
                         let response = match result {
                             Ok(payload) => Response::ok(request.request_id, payload),
                             Err(error) => Response::err(request.request_id, error),
                         };
-                        if write_message(&writer, &ServerMessage::Response(response)).await.is_err() {
+                        let write_result = write_message(&writer, &ServerMessage::Response(response)).await;
+                        if let Some(counter) = &in_flight {
+                            counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        if write_result.is_err() {
                             break;
                         }
                     }
@@ -314,5 +365,38 @@ mod tests {
         let mut trailing = String::new();
         let n = reader.read_line(&mut trailing).await.unwrap_or(0);
         assert_eq!(n, 0, "expected EOF after the server closed the connection");
+    }
+
+    #[tokio::test]
+    async fn run_with_shutdown_drains_an_in_flight_handler_before_returning() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("clipd.sock");
+        let slow_handler: HandlerFn = Arc::new(|_command: Command| {
+            Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                Ok(serde_json::json!({"ok": true}))
+            })
+        });
+        let server = Server::bind(&socket_path, slow_handler).unwrap();
+
+        let mut client = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
+        send_request(&mut client, &crate::protocol::Request::new("r1", Command::GetSettings)).await;
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let run_handle = tokio::spawn(server.run_with_shutdown(async {
+            let _ = shutdown_rx.await;
+        }));
+
+        // Give the accept loop time to accept and dispatch the request, then
+        // signal shutdown while the handler is still sleeping.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let _ = shutdown_tx.send(());
+
+        run_handle.await.unwrap().unwrap();
+
+        let (read, _write) = client.into_split();
+        let mut reader = tokio::io::BufReader::new(read);
+        let response = recv_response(&mut reader).await;
+        assert_eq!(response.request_id(), "r1");
     }
 }
