@@ -30,7 +30,7 @@ impl ClipboardSnapshot {
 
 /// What a given backend actually supports; defaults to nothing so a new or
 /// partially-implemented adapter never silently claims support it lacks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct BackendCapabilities {
     pub capture: bool,
     pub paste_simulation: bool,

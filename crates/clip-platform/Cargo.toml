@@ -10,6 +10,7 @@ clip-core.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+serde.workspace = true
 x11rb = { version = "0.13", features = ["xfixes", "xtest"] }
 global-hotkey = "0.6"
 

@@ -46,6 +46,39 @@ pub fn insert(conn: &Connection, rule: &Rule) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// Inserts a new rule, or updates it in place if a rule with the same id
+/// already exists.
+pub fn upsert(conn: &Connection, rule: &Rule) -> Result<(), StoreError> {
+    let now = crate::clips::to_rfc3339(time::OffsetDateTime::now_utc());
+    conn.execute(
+        "INSERT INTO app_rules (id, app_match, window_match, mime_match, action, enabled, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7) \
+         ON CONFLICT(id) DO UPDATE SET \
+             app_match = excluded.app_match, \
+             window_match = excluded.window_match, \
+             mime_match = excluded.mime_match, \
+             action = excluded.action, \
+             enabled = excluded.enabled, \
+             updated_at = excluded.updated_at",
+        params![
+            rule.id,
+            rule.app_match,
+            rule.window_match,
+            rule.mime_match,
+            action_to_str(rule.action),
+            rule.enabled as i64,
+            now,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Deletes a rule by id.
+pub fn delete(conn: &Connection, id: &str) -> Result<(), StoreError> {
+    conn.execute("DELETE FROM app_rules WHERE id = ?1", [id])?;
+    Ok(())
+}
+
 /// Fetches a single rule by id.
 pub fn get(conn: &Connection, id: &str) -> Result<Option<Rule>, StoreError> {
     let rule = conn
@@ -93,6 +126,31 @@ mod tests {
         let fetched = get(&conn, "r1").unwrap().unwrap();
         assert!(!fetched.enabled);
         assert_eq!(fetched.app_match, "1Password");
+    }
+
+    #[test]
+    fn upserting_a_new_rule_inserts_it() {
+        let conn = crate::db::open(":memory:").unwrap();
+        upsert(&conn, &Rule::new("r1", "1Password", None, None, RuleAction::Exclude)).unwrap();
+        let fetched = get(&conn, "r1").unwrap().unwrap();
+        assert_eq!(fetched.app_match, "1Password");
+    }
+
+    #[test]
+    fn upserting_an_existing_rule_updates_it_in_place() {
+        let conn = crate::db::open(":memory:").unwrap();
+        upsert(&conn, &Rule::new("r1", "1Password", None, None, RuleAction::Exclude)).unwrap();
+        upsert(&conn, &Rule::new("r1", "Bitwarden", None, None, RuleAction::Exclude)).unwrap();
+        let fetched = get(&conn, "r1").unwrap().unwrap();
+        assert_eq!(fetched.app_match, "Bitwarden");
+    }
+
+    #[test]
+    fn deleting_a_rule_removes_it() {
+        let conn = crate::db::open(":memory:").unwrap();
+        insert(&conn, &Rule::new("r1", "1Password", None, None, RuleAction::Exclude)).unwrap();
+        delete(&conn, "r1").unwrap();
+        assert!(get(&conn, "r1").unwrap().is_none());
     }
 
     #[test]

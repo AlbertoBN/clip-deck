@@ -47,6 +47,19 @@ impl<C: X11Connection> PasteSimulator<C> {
             .map_err(PlatformError::Backend)?;
         Ok(())
     }
+
+    /// Like `simulate_paste`, but targets whichever window is currently
+    /// focused at call time, rather than a caller-supplied target. Useful
+    /// when there is no separate "popup activation" moment to capture a
+    /// retained focus snapshot from (e.g. a raw IPC client issuing
+    /// `PasteClip` directly).
+    pub fn paste_to_focused_window(
+        &self,
+        representations: &[ClipRepresentation],
+        mode: PasteMode,
+    ) -> Result<(), PlatformError> {
+        self.simulate_paste(self.conn.focused_window(), representations, mode)
+    }
 }
 
 #[cfg(test)]
@@ -92,6 +105,30 @@ mod tests {
         let representations = vec![ClipRepresentation::new("text/plain", 0).with_text_value("hello")];
 
         let result = simulator.simulate_paste(None, &representations, PasteMode::Auto);
+
+        assert!(matches!(result, Err(PlatformError::NoFocusedWindow)));
+    }
+
+    #[test]
+    fn paste_to_focused_window_targets_whatever_is_currently_focused() {
+        let conn = FakeX11Connection::new();
+        conn.set_focused_window(Some(7));
+        let simulator = PasteSimulator::new(conn);
+        let representations = vec![ClipRepresentation::new("text/plain", 0).with_text_value("hello")];
+
+        simulator.paste_to_focused_window(&representations, PasteMode::Auto).unwrap();
+
+        let ops = simulator.conn.ops_log();
+        assert_eq!(ops[1], RecordedOp::SynthesizeKey(7, "ctrl+v".to_string()));
+    }
+
+    #[test]
+    fn paste_to_focused_window_errors_when_nothing_is_focused() {
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::new(conn);
+        let representations = vec![ClipRepresentation::new("text/plain", 0).with_text_value("hello")];
+
+        let result = simulator.paste_to_focused_window(&representations, PasteMode::Auto);
 
         assert!(matches!(result, Err(PlatformError::NoFocusedWindow)));
     }
