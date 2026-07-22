@@ -258,6 +258,45 @@ impl X11Connection for RealX11Connection {
         self.get_property_string(self.helper_window, property, self.atoms.utf8_string)
     }
 
+    fn read_selection_target(&self, mime: &str) -> Option<Vec<u8>> {
+        let owner = xproto::get_selection_owner(&self.conn, self.atoms.clipboard).ok()?.reply().ok()?;
+        if owner.owner == x11rb::NONE {
+            return None;
+        }
+
+        let target = xproto::intern_atom(&self.conn, false, mime.as_bytes()).ok()?.reply().ok()?.atom;
+        let property = target;
+        let (tx, rx) = mpsc::channel();
+        *self.pending_notify.lock().unwrap() = Some(tx);
+
+        xproto::convert_selection(
+            &self.conn,
+            self.helper_window,
+            self.atoms.clipboard,
+            target,
+            property,
+            x11rb::CURRENT_TIME,
+        )
+        .ok()?
+        .check()
+        .ok()?;
+        self.conn.flush().ok()?;
+
+        let notify = rx.recv_timeout(std::time::Duration::from_millis(500)).ok()?;
+        if notify.property == 0 {
+            return None;
+        }
+        let reply = xproto::get_property(&self.conn, false, self.helper_window, property, AtomEnum::ANY, 0, u32::MAX)
+            .ok()?
+            .reply()
+            .ok()?;
+        if reply.value.is_empty() {
+            None
+        } else {
+            Some(reply.value)
+        }
+    }
+
     fn write_selection(&self, content: &str) {
         self.owned_content.lock().unwrap().text = Some(content.to_string());
         if let Ok(cookie) =
@@ -379,7 +418,8 @@ mod tests {
     #[ignore = "requires a live X11 server; run manually, e.g. under Xvfb"]
     fn real_connection_round_trips_clipboard_content() {
         let conn = RealX11Connection::connect(None).expect("connect to X server");
-        let backend = X11Backend::new(conn);
+        let blob_dir = std::env::temp_dir().join("clipdeck-integration-test-blobs");
+        let backend = X11Backend::new(conn, blob_dir);
         backend.set_current("clipdeck integration test").unwrap();
         let snapshot = backend.read_current().unwrap();
         assert_eq!(

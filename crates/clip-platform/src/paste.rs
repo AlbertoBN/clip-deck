@@ -9,14 +9,27 @@ use clip_core::models::{ClipRepresentation, PasteMode};
 /// paste always uses the platform-conventional `Ctrl+V`.
 const PASTE_KEY_BINDING: &str = "ctrl+v";
 
-/// Resolves which text to place on the clipboard before pasting: the
-/// plain-text-rendered form (`preview_text`, falling back to `text_value`)
-/// when `mode` is `PlainText`, otherwise the representation's own value.
+/// Resolves which text to place on the clipboard before pasting.
+///
+/// `PlainText` looks for the clip's own `text/plain` representation first,
+/// discarding any richer one; `Auto`/`Rich` prefer the richest representation
+/// available (`text/html` over `text/plain`). Both fall back to the first
+/// representation's plain-text-rendered form (`preview_text`, then
+/// `text_value`) when nothing matches the preferred mime type, matching
+/// Milestone-1's single-representation behavior.
 fn resolve_paste_text(representations: &[ClipRepresentation], mode: PasteMode) -> Option<String> {
-    let representation = representations.first()?;
+    let first = representations.first()?;
     match mode {
-        PasteMode::PlainText => representation.preview_text.clone().or_else(|| representation.text_value.clone()),
-        PasteMode::Auto | PasteMode::Rich => representation.text_value.clone(),
+        PasteMode::PlainText => representations
+            .iter()
+            .find(|r| r.mime_type == "text/plain")
+            .and_then(|r| r.text_value.clone())
+            .or_else(|| first.preview_text.clone().or_else(|| first.text_value.clone())),
+        PasteMode::Auto | PasteMode::Rich => representations
+            .iter()
+            .find(|r| r.mime_type == "text/html")
+            .and_then(|r| r.text_value.clone())
+            .or_else(|| first.text_value.clone()),
     }
 }
 
@@ -86,6 +99,19 @@ mod tests {
     }
 
     #[test]
+    fn auto_mode_pastes_html_when_both_representations_are_present() {
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::new(conn);
+        let text = ClipRepresentation::new("text/plain", 0).with_text_value("hi");
+        let html = ClipRepresentation::new("text/html", 1).with_text_value("<b>hi</b>");
+
+        simulator.simulate_paste(Some(1), &[text, html], PasteMode::Auto).unwrap();
+
+        let ops = simulator.conn.ops_log();
+        assert_eq!(ops[0], RecordedOp::WriteSelection("<b>hi</b>".to_string()));
+    }
+
+    #[test]
     fn plain_text_mode_ignores_a_non_plain_text_representation() {
         let conn = FakeX11Connection::new();
         let simulator = PasteSimulator::new(conn);
@@ -93,6 +119,19 @@ mod tests {
         html.preview_text = Some("hi".to_string());
 
         simulator.simulate_paste(Some(1), &[html], PasteMode::PlainText).unwrap();
+
+        let ops = simulator.conn.ops_log();
+        assert_eq!(ops[0], RecordedOp::WriteSelection("hi".to_string()));
+    }
+
+    #[test]
+    fn plain_text_mode_strips_html_down_to_its_plain_text_rendering_when_both_are_present() {
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::new(conn);
+        let text = ClipRepresentation::new("text/plain", 0).with_text_value("hi");
+        let html = ClipRepresentation::new("text/html", 1).with_text_value("<b>hi</b>");
+
+        simulator.simulate_paste(Some(1), &[text, html], PasteMode::PlainText).unwrap();
 
         let ops = simulator.conn.ops_log();
         assert_eq!(ops[0], RecordedOp::WriteSelection("hi".to_string()));

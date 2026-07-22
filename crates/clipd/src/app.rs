@@ -164,8 +164,9 @@ impl X11DaemonBackend {
             .map_err(|e| anyhow::anyhow!("failed to open X11 connection for focus tracking: {e}"))?;
         let paste_conn = clip_platform::x11::RealX11Connection::connect(None)
             .map_err(|e| anyhow::anyhow!("failed to open X11 connection for paste: {e}"))?;
+        let blob_dir = clip_core::config::AppPaths::resolve().data_dir.join("blobs");
         Ok(Self {
-            capture: clip_platform::x11::X11Backend::new(capture_conn),
+            capture: clip_platform::x11::X11Backend::new(capture_conn, blob_dir),
             focus: clip_platform::focus::FocusTracker::new(focus_conn),
             paste: clip_platform::paste::PasteSimulator::new(paste_conn),
         })

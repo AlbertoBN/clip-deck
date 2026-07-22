@@ -13,6 +13,10 @@ tracing.workspace = true
 serde.workspace = true
 x11rb = { version = "0.13", features = ["xfixes", "xtest"] }
 global-hotkey = "0.6"
+image.workspace = true
 
 # Wayland bindings are deliberately left out until that adapter is implemented;
 # see the PRD's "Recommended crate choices" table before picking versions.
+
+[dev-dependencies]
+tempfile = "3"

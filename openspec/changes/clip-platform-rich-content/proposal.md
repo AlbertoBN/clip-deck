@@ -38,3 +38,29 @@ paste needs to choose between rich and plain-text representations rather than al
   contains (per `clip-ingest-pipeline`'s "one snapshot, multiple representations" requirement), so no
   change is needed there; `clip-ui-tauri-shell`'s preview pane (already spec'd to render HTML/image) simply
   starts receiving real HTML/image data instead of only plain text.
+
+### Amendment (discovered during implementation)
+
+Four things surfaced while implementing that this proposal didn't anticipate:
+
+- **`X11Connection` gained a new trait method**, `read_selection_target(&self, mime: &str) -> Option<Vec<u8>>`,
+  generalizing the existing text-only `read_selection` to any selection target (`"text/html"`,
+  `"image/png"`). Implemented for both the fake (`crates/clip-platform/src/x11/mod.rs`) and
+  `RealX11Connection` (`crates/clip-platform/src/x11/real.rs`, mirroring `read_selection`'s
+  `ConvertSelection`/`SelectionNotify` flow, generalized to an arbitrary target atom).
+- **`X11Backend::new` gained a required `blob_dir` parameter** (`crates/clip-platform/src/x11/mod.rs`):
+  captured images and their thumbnails are written to disk there (content-addressed by `blake3` hash,
+  matching the project's existing dedup-hashing convention), since `ClipRepresentation` has no in-memory
+  raw-bytes carrier field for a later layer to write from - `clip-platform` is the layer that already
+  decodes the image, so it's also the natural place to write the blob and set `blob_path` itself. This
+  required a one-line downstream update to `clipd-daemon-core`'s `X11DaemonBackend::connect()`
+  (`crates/clipd/src/app.rs`), which now resolves `AppPaths::resolve().data_dir.join("blobs")` and passes
+  it through.
+- **`X11Backend::start`'s dedup-hash computation was buggy for image-only copies**: it hashed only the
+  first representation's `text_value`, which is `None` for an image-only snapshot, so `None != None` never
+  triggered a capture event. Fixed by falling back to the (already content-addressed) `blob_path` when
+  `text_value` is absent - see `design.md`'s amendment note.
+- **`image::imageops::thumbnail` does not preserve aspect ratio on its own** - it resamples to the *exact*
+  box given. `design.md`'s original claim that it does was wrong; the fix computes a target box from the
+  source's aspect ratio (bounded to 256px on the long edge) before calling it. See `design.md`'s amendment
+  note under "Decisions" for detail.
