@@ -29,9 +29,12 @@ capture side (more target formats) and the paste side (representation selection)
 - **Image capture**: read the `image/png` X11 selection target (X11 clipboards conventionally offer PNG
   even for other source formats); decode via the `image` crate to obtain width/height and to normalize to
   PNG for the on-disk blob, rather than storing whatever raw bytes X11 handed back.
-- **Thumbnail sizing**: max 256px on the long edge, `image::imageops::thumbnail` (preserves aspect ratio
-  by construction), stored as a separate file next to the full image's `blob_path` rather than embedded in
-  the database.
+- **Thumbnail sizing**: max 256px on the long edge, via `image::imageops::thumbnail`, stored as a separate
+  file next to the full image's `blob_path` rather than embedded in the database. **Amendment (discovered
+  during implementation)**: `imageops::thumbnail(image, new_width, new_height)` resamples to the *exact*
+  box given rather than fitting-within it - it does not preserve aspect ratio on its own. The target box
+  passed to it must already be computed from the source's aspect ratio (scaled so the long edge is
+  `MAX_THUMBNAIL_DIM`), not a fixed square.
 - **Auto paste-mode selection**: a small ranking (`Html > Text`, extendable later) picks the richest
   representation off the clip's existing `ClipRepresentation` list; this is pure selection logic against
   already-persisted representations, not a new capture concern, so it lives in `clip-platform::paste`
@@ -44,11 +47,14 @@ capture side (more target formats) and the paste side (representation selection)
 - `rich-clipboard-capture`: extend the existing fake `X11Connection` (from `clip-platform-x11-adapter`) to
   offer configurable HTML/image targets; tests for both-representations-returned, image-dimensions-
   reported, and undecodable-image-skipped-others-kept. Run with `cargo test -p clip-platform x11::`.
-- `thumbnail-generation`: unit tests against in-memory generated test images (no real file I/O required
-  beyond a temp dir) - bounded-size test, aspect-ratio-preserved test (assert ratio within a small
-  tolerance), thumbnail-failure-does-not-block-persistence test (inject a decode failure only in the
-  thumbnail step via a fakeable thumbnailer trait). Run with `cargo test -p clip-platform thumbnail::` (or
-  a `x11::` submodule if colocated).
+- `thumbnail-generation`: unit tests against in-memory generated test images, written to a `tempfile`
+  temp dir - bounded-size test, aspect-ratio-preserved test (assert ratio within a small tolerance),
+  thumbnail-failure-does-not-block-persistence test. **Amendment (discovered during implementation)**: the
+  failure-isolation test does not need an injectable thumbnailer trait - `image::imageops::thumbnail` on an
+  already-decoded image can't realistically fail, so the test instead pre-creates a regular file at the
+  `thumbnails/` subdirectory path, making `create_dir_all` fail with a real `io::Error`; simpler than adding
+  a fake-only seam for one scenario. Colocated in `x11::tests` alongside capture, since thumbnailing runs
+  inline within `X11Backend::read_current`.
 - `paste-simulation` (modified): tests already existing from `clip-platform-x11-adapter` continue to pass
   unmodified; new tests add the Auto-prefers-HTML scenario and the PlainText-strips-HTML-when-both-
   present scenario, both against the fake connection with a clip carrying two representations.
