@@ -6,7 +6,7 @@ members = [
     "crates/clip-platform",
     "crates/clip-ipc",
     "crates/clipd",
-    "crates/clip-ui-tauri",
+    "crates/clip-ui-tauri/src-tauri",
 ]
 
 [workspace.package]
