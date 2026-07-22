@@ -48,3 +48,23 @@ product exists for.
   for the frontend build.
 - Completes the PRD's Milestone 1 UI slice (popup + Enter-to-paste) and lays the surfaces that Milestone 2
   (preview) and Milestone 3 (organization/lifecycle UI) extend rather than replace.
+
+### Known gaps (discovered during implementation)
+
+This change deliberately does not add new IPC commands/events (see Non-Goals), so a few spec scenarios are
+satisfied at the frontend layer (component tests against a mocked `invoke`) without an equivalent real
+backend behavior yet - each is a pre-existing gap in an already-completed change, not a defect in this one:
+
+- **Hotkey binding validation**: `settings-ui`'s "invalid binding is not saved" scenario is tested by
+  mocking `update_settings` to reject; the real `clipd` handler (`clipd-daemon-core`) does not yet validate
+  the binding via `clip-platform`'s parser before persisting it, so today any string is accepted. The UI
+  correctly surfaces whatever error the daemon eventually returns once that validation is added.
+- **No rule-listing IPC command**: the protocol has `SaveRule`/`DeleteRule` but no `ListRules`/`GetRules`
+  query. The settings screen's rule list is therefore session-local (rules created or deleted during the
+  current session), not fetched from the daemon on load - existing persisted rules from a prior session
+  don't appear until a listing command is added.
+- **No hotkey-triggered popup window**: `App.tsx` routes between `Popup`/`Manager`/`Settings` by window
+  label, but `tauri.conf.json` only declares one `"main"` window, and `clipd` does not yet register/publish
+  a global hotkey (a known gap from `clipd-daemon-core`). Opening the popup via the configured hotkey needs
+  that daemon-side wiring plus a second window definition (or a runtime-created `WebviewWindow`) - neither
+  is in this change's scope.
