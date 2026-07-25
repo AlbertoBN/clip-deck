@@ -27,7 +27,7 @@ pub struct ClientHandle(pub std::sync::Arc<dyn Client>);
 /// Subscribes to the client's daemon event stream and forwards each event to
 /// `emit`, until the client's broadcast channel closes.
 pub fn spawn_event_forwarder(client: std::sync::Arc<dyn Client>, emit: impl Fn(Event) + Send + Sync + 'static) {
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let mut events = client.subscribe();
         while let Ok(event) = events.recv().await {
             emit(event);
