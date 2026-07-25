@@ -25,6 +25,7 @@ pub trait Store: Send + Sync {
     fn clear_history(&self, scope: ClearScope) -> Result<Vec<String>, StoreError>;
     fn list_groups(&self) -> Result<Vec<Group>, StoreError>;
     fn list_enabled_rules(&self) -> Result<Vec<Rule>, StoreError>;
+    fn list_rules(&self) -> Result<Vec<Rule>, StoreError>;
     fn save_rule(&self, rule: &Rule) -> Result<(), StoreError>;
     fn delete_rule(&self, id: &str) -> Result<(), StoreError>;
     fn get_settings(&self) -> Result<AppSettings, StoreError>;
@@ -120,6 +121,10 @@ impl Store for SqliteStore {
         clip_store::rules::list_enabled(&self.conn.lock().unwrap())
     }
 
+    fn list_rules(&self) -> Result<Vec<Rule>, StoreError> {
+        clip_store::rules::list_all(&self.conn.lock().unwrap())
+    }
+
     fn save_rule(&self, rule: &Rule) -> Result<(), StoreError> {
         clip_store::rules::upsert(&self.conn.lock().unwrap(), rule)
     }
@@ -203,6 +208,34 @@ pub enum AppError {
     Platform(#[from] PlatformError),
 }
 
+/// Registers the persisted `hotkey_binding` (per `GetSettings`) with
+/// `hotkeys`, wiring its callback to publish `Event::HotkeyPressed`. A
+/// missing/unparseable binding or a registration failure (e.g. an
+/// unsupported compositor) is logged and does not propagate - the caller
+/// (`run`) must keep starting up regardless, per `hotkey-registration`'s
+/// spec.
+fn register_hotkey(store: &dyn Store, hotkeys: &Arc<dyn clip_platform::hotkeys::HotkeyBackend>, events: Arc<dyn EventPublisher>) {
+    let settings = match store.get_settings() {
+        Ok(settings) => settings,
+        Err(error) => {
+            tracing::warn!(%error, "failed to load settings for hotkey registration; skipping");
+            return;
+        }
+    };
+
+    let binding = match clip_platform::hotkeys::parse_binding(&settings.hotkey_binding) {
+        Ok(binding) => binding,
+        Err(error) => {
+            tracing::warn!(%error, binding = %settings.hotkey_binding, "persisted hotkey binding failed to parse; skipping registration");
+            return;
+        }
+    };
+
+    if let Err(error) = hotkeys.register(binding, Box::new(move || events.publish(clip_ipc::protocol::Event::HotkeyPressed))) {
+        tracing::warn!(%error, "failed to register global hotkey; hotkey-triggered popup activation will not work");
+    }
+}
+
 /// Starts the daemon: applies migrations, binds the IPC server (failing fast
 /// if another instance is already running), starts the clipboard watch loop,
 /// and schedules the retention job - then serves IPC commands until
@@ -212,6 +245,7 @@ pub async fn run(
     socket_path: std::path::PathBuf,
     backend: Arc<dyn Backend>,
     backend_name: String,
+    hotkeys: Arc<dyn clip_platform::hotkeys::HotkeyBackend>,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), AppError> {
     // Fail fast if another instance is already live on this socket, before
@@ -252,6 +286,7 @@ pub async fn run(
 
     watch_loop.start(backend.clone(), store.clone(), events.clone())?;
     tokio::spawn(crate::jobs::run_retention_job(store.clone(), std::time::Duration::from_secs(3600)));
+    register_hotkey(store.as_ref(), &hotkeys, events.clone());
 
     server.run_with_shutdown(shutdown).await?;
     Ok(())
@@ -384,6 +419,10 @@ pub(crate) mod fakes {
             Ok(self.rules.lock().unwrap().values().filter(|r| r.enabled).cloned().collect())
         }
 
+        fn list_rules(&self) -> Result<Vec<Rule>, StoreError> {
+            Ok(self.rules.lock().unwrap().values().cloned().collect())
+        }
+
         fn save_rule(&self, rule: &Rule) -> Result<(), StoreError> {
             self.rules.lock().unwrap().insert(rule.id.clone(), rule.clone());
             Ok(())
@@ -508,13 +547,61 @@ pub(crate) mod fakes {
             self.events.lock().unwrap().push(event);
         }
     }
+
+    type HotkeyCallback = Box<dyn Fn() + Send + Sync>;
+
+    /// `clipd`'s own fake `HotkeyBackend` (clip-platform's is
+    /// `#[cfg(test)] pub(crate)`-scoped to that crate, not visible here) -
+    /// records the registered callback so tests can trigger it directly, and
+    /// can be configured to fail registration like an unsupported-compositor
+    /// backend would.
+    #[derive(Default)]
+    pub(crate) struct FakeHotkeyBackend {
+        registered: Mutex<Option<HotkeyCallback>>,
+        fail_registration: AtomicBool,
+    }
+
+    impl FakeHotkeyBackend {
+        pub(crate) fn new() -> Self {
+            Self::default()
+        }
+
+        pub(crate) fn fail_registration(&self) {
+            self.fail_registration.store(true, Ordering::SeqCst);
+        }
+
+        /// Test helper: simulates the registered hotkey firing.
+        pub(crate) fn trigger(&self) {
+            if let Some(callback) = self.registered.lock().unwrap().as_ref() {
+                callback();
+            }
+        }
+    }
+
+    impl clip_platform::hotkeys::HotkeyBackend for FakeHotkeyBackend {
+        fn register(
+            &self,
+            _binding: clip_platform::hotkeys::HotkeyBinding,
+            callback: Box<dyn Fn() + Send + Sync>,
+        ) -> Result<(), clip_platform::hotkeys::HotkeyError> {
+            if self.fail_registration.load(Ordering::SeqCst) {
+                return Err(clip_platform::hotkeys::HotkeyError::Unsupported);
+            }
+            *self.registered.lock().unwrap() = Some(callback);
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::fakes::{FakeBackend, FakeEventPublisher, FakeStore};
+    use super::fakes::{FakeBackend, FakeEventPublisher, FakeHotkeyBackend, FakeStore};
     use super::*;
     use clip_core::models::Clip;
+
+    fn fake_hotkeys() -> Arc<dyn clip_platform::hotkeys::HotkeyBackend> {
+        Arc::new(FakeHotkeyBackend::new())
+    }
 
     #[test]
     fn fake_store_backend_and_event_publisher_satisfy_their_traits() {
@@ -529,6 +616,44 @@ mod tests {
         assert!(!backend.capabilities().capture);
 
         events.publish(clip_ipc::protocol::Event::HotkeyPressed);
+    }
+
+    #[test]
+    fn hotkey_registration_publishes_hotkey_pressed_when_triggered() {
+        let store = FakeStore::new();
+        let hotkeys = Arc::new(FakeHotkeyBackend::new());
+        let events = Arc::new(FakeEventPublisher::new());
+
+        register_hotkey(&store, &(hotkeys.clone() as Arc<dyn clip_platform::hotkeys::HotkeyBackend>), events.clone());
+        hotkeys.trigger();
+
+        assert_eq!(events.events(), vec![clip_ipc::protocol::Event::HotkeyPressed]);
+    }
+
+    #[test]
+    fn an_invalid_persisted_binding_is_skipped_without_publishing_or_panicking() {
+        let store = FakeStore::new();
+        store
+            .update_settings(&AppSettings { hotkey_binding: "NotAKey+++".to_string(), ..AppSettings::default() })
+            .unwrap();
+        let hotkeys = Arc::new(FakeHotkeyBackend::new());
+        let events = Arc::new(FakeEventPublisher::new());
+
+        register_hotkey(&store, &(hotkeys.clone() as Arc<dyn clip_platform::hotkeys::HotkeyBackend>), events.clone());
+
+        assert!(events.events().is_empty());
+    }
+
+    #[test]
+    fn a_hotkey_registration_failure_is_swallowed_without_publishing_or_panicking() {
+        let store = FakeStore::new();
+        let hotkeys = Arc::new(FakeHotkeyBackend::new());
+        hotkeys.fail_registration();
+        let events = Arc::new(FakeEventPublisher::new());
+
+        register_hotkey(&store, &(hotkeys.clone() as Arc<dyn clip_platform::hotkeys::HotkeyBackend>), events.clone());
+
+        assert!(events.events().is_empty());
     }
 
     fn temp_db_and_socket() -> (tempfile::TempDir, String, std::path::PathBuf) {
@@ -556,7 +681,7 @@ mod tests {
         assert!(tokio::net::UnixStream::connect(&socket_path).await.is_err(), "socket shouldn't exist yet");
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let run_handle = tokio::spawn(run(db_path, socket_path.clone(), backend, "fake".to_string(), async {
+        let run_handle = tokio::spawn(run(db_path, socket_path.clone(), backend, "fake".to_string(), fake_hotkeys(), async {
             let _ = shutdown_rx.await;
         }));
 
@@ -575,14 +700,14 @@ mod tests {
         let backend: Arc<dyn Backend> = Arc::new(FakeBackend::new());
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let first_handle = tokio::spawn(run(db_path.clone(), socket_path.clone(), backend, "fake".to_string(), async {
+        let first_handle = tokio::spawn(run(db_path.clone(), socket_path.clone(), backend, "fake".to_string(), fake_hotkeys(), async {
             let _ = shutdown_rx.await;
         }));
 
         wait_until_connectable(&socket_path).await;
 
         let second_backend: Arc<dyn Backend> = Arc::new(FakeBackend::new());
-        let result = run(db_path, socket_path, second_backend, "fake".to_string(), std::future::pending()).await;
+        let result = run(db_path, socket_path, second_backend, "fake".to_string(), fake_hotkeys(), std::future::pending()).await;
 
         assert!(matches!(result, Err(AppError::AlreadyRunning(_))), "expected AlreadyRunning, got {result:?}");
 
@@ -603,7 +728,7 @@ mod tests {
         let backend_dyn: Arc<dyn Backend> = backend.clone();
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let run_handle = tokio::spawn(run(db_path, socket_path.clone(), backend_dyn, "fake".to_string(), async {
+        let run_handle = tokio::spawn(run(db_path, socket_path.clone(), backend_dyn, "fake".to_string(), fake_hotkeys(), async {
             let _ = shutdown_rx.await;
         }));
 
@@ -646,7 +771,7 @@ mod tests {
         let backend_dyn: Arc<dyn Backend> = backend.clone();
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let run_handle = tokio::spawn(run(db_path.clone(), socket_path.clone(), backend_dyn, "fake".to_string(), async {
+        let run_handle = tokio::spawn(run(db_path.clone(), socket_path.clone(), backend_dyn, "fake".to_string(), fake_hotkeys(), async {
             let _ = shutdown_rx.await;
         }));
 

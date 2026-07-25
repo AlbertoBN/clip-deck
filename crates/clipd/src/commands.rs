@@ -49,6 +49,10 @@ impl CommandHandler {
                 let groups = self.store.list_groups().map_err(|e| e.to_string())?;
                 Ok(serde_json::to_value(groups).expect("groups always serialize"))
             }
+            Command::ListRules => {
+                let rules = self.store.list_rules().map_err(|e| e.to_string())?;
+                Ok(serde_json::to_value(rules).expect("rules always serialize"))
+            }
             Command::GetSettings => {
                 let settings = self.store.get_settings().map_err(|e| e.to_string())?;
                 Ok(serde_json::to_value(settings).expect("settings always serialize"))
@@ -94,6 +98,7 @@ impl CommandHandler {
                 Ok(serde_json::json!({"ok": true}))
             }
             Command::UpdateSettings { settings } => {
+                clip_platform::hotkeys::parse_binding(&settings.hotkey_binding).map_err(|e| e.to_string())?;
                 self.store.update_settings(&settings).map_err(|e| e.to_string())?;
                 Ok(serde_json::json!({"ok": true}))
             }
@@ -300,6 +305,37 @@ mod tests {
     }
 
     #[test]
+    fn update_settings_persists_a_valid_hotkey_binding() {
+        let (handler, _store, _backend, _events) = handler();
+        let settings = clip_core::config::AppSettings {
+            hotkey_binding: "Ctrl+Shift+V".to_string(),
+            ..clip_core::config::AppSettings::default()
+        };
+
+        handler.handle(Command::UpdateSettings { settings }).unwrap();
+
+        let response = handler.handle(Command::GetSettings).unwrap();
+        let fetched: clip_core::config::AppSettings = serde_json::from_value(response).unwrap();
+        assert_eq!(fetched.hotkey_binding, "Ctrl+Shift+V");
+    }
+
+    #[test]
+    fn update_settings_rejects_an_invalid_hotkey_binding_without_persisting_it() {
+        let (handler, _store, _backend, _events) = handler();
+        let settings = clip_core::config::AppSettings {
+            hotkey_binding: "NotAKey+++".to_string(),
+            ..clip_core::config::AppSettings::default()
+        };
+
+        let result = handler.handle(Command::UpdateSettings { settings });
+
+        assert!(result.is_err());
+        let response = handler.handle(Command::GetSettings).unwrap();
+        let fetched: clip_core::config::AppSettings = serde_json::from_value(response).unwrap();
+        assert_eq!(fetched.hotkey_binding, clip_core::config::AppSettings::default().hotkey_binding);
+    }
+
+    #[test]
     fn get_diagnostics_mirrors_the_fake_backends_capabilities() {
         let (handler, _store, backend, _events) = handler();
         backend.set_capabilities(clip_platform::clipboard::BackendCapabilities {
@@ -325,5 +361,21 @@ mod tests {
         let groups: Vec<Group> = serde_json::from_value(response).unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].id, "g1");
+    }
+
+    #[test]
+    fn list_rules_returns_every_rule_regardless_of_enabled_state() {
+        let (handler, store, _backend, _events) = handler();
+        store.save_rule(&Rule::new("r1", "1Password", None, None, RuleAction::Exclude)).unwrap();
+        store
+            .save_rule(&Rule { enabled: false, ..Rule::new("r2", "Bitwarden", None, None, RuleAction::Exclude) })
+            .unwrap();
+
+        let response = handler.handle(Command::ListRules).unwrap();
+
+        let rules: Vec<Rule> = serde_json::from_value(response).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert!(rules.iter().any(|r| r.id == "r1" && r.enabled));
+        assert!(rules.iter().any(|r| r.id == "r2" && !r.enabled));
     }
 }

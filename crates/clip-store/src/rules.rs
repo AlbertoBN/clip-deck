@@ -103,6 +103,14 @@ pub fn list_enabled(conn: &Connection) -> Result<Vec<Rule>, StoreError> {
     Ok(rules)
 }
 
+/// Lists every rule regardless of `enabled` state, ordered by `app_match`
+/// then `id` for stable, deterministic display.
+pub fn list_all(conn: &Connection) -> Result<Vec<Rule>, StoreError> {
+    let mut stmt = conn.prepare(&format!("SELECT {RULE_COLUMNS} FROM app_rules ORDER BY app_match, id"))?;
+    let rules = stmt.query_map([], row_to_rule)?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rules)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,6 +170,20 @@ mod tests {
         let enabled = list_enabled(&conn).unwrap();
         assert_eq!(enabled.len(), 1);
         assert_eq!(enabled[0].id, "r1");
+    }
+
+    #[test]
+    fn listing_all_rules_includes_both_enabled_and_disabled_rules() {
+        let conn = crate::db::open(":memory:").unwrap();
+        insert(&conn, &Rule::new("r1", "Enabled", None, None, RuleAction::Exclude)).unwrap();
+        insert(&conn, &Rule::new("r2", "Disabled", None, None, RuleAction::Exclude)).unwrap();
+        set_enabled(&conn, "r2", false).unwrap();
+
+        let all = list_all(&conn).unwrap();
+
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().any(|r| r.id == "r1" && r.enabled));
+        assert!(all.iter().any(|r| r.id == "r2" && !r.enabled));
     }
 
     #[test]

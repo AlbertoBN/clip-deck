@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { listen } from '@tauri-apps/api/event'
 import { callCommand } from '../../state/client'
 import { useClipStore } from '../../state/store'
+import { DAEMON_EVENT_CHANNEL, type DaemonEvent } from '../../state/types'
 
 const SEARCH_DEBOUNCE_MS = 200
 
@@ -12,10 +14,31 @@ export function Popup() {
   const clips = useClipStore((s) => s.clips)
   const searchClips = useClipStore((s) => s.searchClips)
 
-  useEffect(() => {
+  const activate = () => {
     inputRef.current?.focus()
     void searchClips('')
+  }
+
+  useEffect(() => {
+    activate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchClips])
+
+  useEffect(() => {
+    // The window is shown/hidden rather than created/destroyed on each
+    // hotkey press, so the mount effect above only covers the very first
+    // activation - repeat presses re-run the same focus-and-empty-search
+    // behavior via this listener instead.
+    const unlisten = listen<DaemonEvent>(DAEMON_EVENT_CHANNEL, (event) => {
+      if (event.payload.type === 'HotkeyPressed') {
+        activate()
+      }
+    })
+    return () => {
+      void unlisten.then((f) => f())
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const handle = setTimeout(() => {

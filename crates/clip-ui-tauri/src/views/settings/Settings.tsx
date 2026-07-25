@@ -21,6 +21,7 @@ export function Settings() {
       setHotkeyInput(loaded.hotkey_binding)
     })
     void callCommand<DiagnosticsReport>('get_diagnostics').then(setDiagnostics)
+    void callCommand<Rule[]>('list_rules').then(setRules)
   }, [])
 
   const handleSaveHotkey = async () => {

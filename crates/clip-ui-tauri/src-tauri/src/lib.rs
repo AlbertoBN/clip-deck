@@ -80,6 +80,12 @@ pub fn run() {
                     tray_state.set_paused(*paused);
                     let _ = pause_item_for_events.set_text(tray::pause_menu_label(tray_state.inner()));
                 }
+                if let Event::HotkeyPressed = &event {
+                    if let Some(popup) = app_handle_for_events.get_webview_window("popup") {
+                        let _ = popup.show();
+                        let _ = popup.set_focus();
+                    }
+                }
                 let _ = app_handle_for_events.emit(DAEMON_EVENT_CHANNEL, event);
             });
 
@@ -94,6 +100,7 @@ pub fn run() {
             commands::delete_clip,
             commands::clear_history,
             commands::list_groups,
+            commands::list_rules,
             commands::save_rule,
             commands::delete_rule,
             commands::get_settings,
