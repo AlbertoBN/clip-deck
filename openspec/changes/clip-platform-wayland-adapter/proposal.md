@@ -47,3 +47,21 @@ than assuming X11-level feature parity.
   not modify `clipd`'s selection logic itself, only provides the backend it can select); `clip-ui-tauri-
   shell`'s diagnostics screen (already spec'd to show unsupported capabilities explicitly) starts showing
   genuinely-partial Wayland reports instead of only ever seeing X11's full-support report.
+
+### Amendment (discovered during implementation)
+
+- **`HotkeyBackend` gained a defaulted `is_supported(&self) -> bool` method** (default `true`, so
+  `GlobalHotkeyBackend`/`FakeHotkeyBackend` need no changes) plus a new `UnsupportedHotkeyBackend`
+  implementing it as `false`. `focus.rs` gained a parallel standalone `UnsupportedFocusTracker` (not generic
+  over a connection, since Wayland's lack of focus info is categorical here, not compositor-probed).
+  Neither is wired into a full composed Wayland `ClipboardBackend` in this change - see `design.md`'s
+  amendment note; that composition belongs to a future `clipd` change.
+- **`PasteSimulator` gained a `focus_detection_supported` flag** (default `true` via the existing `new`,
+  so every existing X11 call site is unchanged) and a new `without_focus_detection` constructor for the
+  degraded path, tested against the existing `FakeX11Connection` rather than a new Wayland-specific type.
+- **The real `RealWaylandConnection`** (`crates/clip-platform/src/wayland/real.rs`) implements the
+  `wlr-data-control` protocol directly via `wayland-client`'s `Dispatch` mechanism (registry -> `wl_seat` +
+  `zwlr_data_control_manager_v1` -> data device -> offer/source event handling), mirroring
+  `RealX11Connection`'s background-thread-pumps-events structure. This is the one piece of this change that
+  cannot be exercised by the automated suite (no compositor in this environment) - it compiles cleanly and
+  passes `clippy`, but its correctness can only be confirmed by tasks 7.2/7.3's manual verification.
