@@ -37,9 +37,24 @@ reports differ from X11's.
   the UI, both `hotkeys` and `focus` gain a construction-time or first-call capability probe that sets the
   relevant `BackendCapabilities` flag to `false` once, so callers only ever need to check `capabilities()`
   - they don't need per-call error handling for "not supported here."
+  **Amendment (discovered during implementation)**: concretely, this is a defaulted `is_supported(&self)
+  -> bool { true }` method added to `hotkeys::HotkeyBackend`, plus a new `hotkeys::UnsupportedHotkeyBackend`
+  (always returns `Err(HotkeyError::Unsupported)` from `register` and `false` from `is_supported`) and a
+  parallel standalone `focus::UnsupportedFocusTracker` (not generic over any connection - Wayland's "no
+  focus info" is categorical, not per-compositor-probed, so no fake/real split was needed here, unlike
+  `FocusTracker<C: X11Connection>`). Neither is wired into a `WaylandDaemonBackend` composition in this
+  change - that composition (mirroring `clipd-daemon-core`'s `X11DaemonBackend`) is `clipd`'s job in a
+  future change, since this proposal's Impact explicitly does not touch `clipd`'s backend-selection logic.
 - **Paste degradation**: implemented as a branch in the existing `clip-platform::paste` code keyed off
   `capabilities().focus_detection`, not a Wayland-specific paste function, so `clipd`'s `PasteClip` handler
   (already written against the generic `ClipboardBackend` trait) needs no changes.
+  **Amendment (discovered during implementation)**: concretely, `PasteSimulator<C: X11Connection>` (still
+  generic over `X11Connection`, unchanged from `clip-platform-x11-adapter`/`clip-platform-rich-content`)
+  gained a `focus_detection_supported: bool` field, defaulting to `true` via the existing `new` constructor
+  (so X11's behavior and every existing call site, including `clipd-daemon-core`'s, is unchanged) plus a
+  new `PasteSimulator::without_focus_detection(conn)` constructor for the degraded path. This was tested
+  entirely against the existing `FakeX11Connection` (just constructed via the new function) rather than
+  requiring a Wayland-specific paste type, exactly matching this decision's intent.
 
 ## Test strategy
 

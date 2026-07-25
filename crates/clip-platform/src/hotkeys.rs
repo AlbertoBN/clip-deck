@@ -20,6 +20,8 @@ pub enum HotkeyError {
     InvalidBinding(String),
     #[error("hotkey '{0:?}' is already registered")]
     AlreadyRegistered(HotkeyBinding),
+    #[error("hotkey registration is not supported on this compositor")]
+    Unsupported,
 }
 
 /// Parses a binding string like `"Ctrl+Shift+V"` into modifiers + key.
@@ -62,6 +64,49 @@ pub trait HotkeyBackend: Send + Sync {
         binding: HotkeyBinding,
         callback: Box<dyn Fn() + Send + Sync>,
     ) -> Result<(), HotkeyError>;
+
+    /// Whether this backend has a usable global-shortcut mechanism at all.
+    /// Defaults to `true`; a compositor/session with no such mechanism (e.g.
+    /// Wayland without portal-based global shortcuts, see
+    /// `UnsupportedHotkeyBackend`) overrides this to `false`, so callers can
+    /// report it via `BackendCapabilities` without needing to attempt a
+    /// registration first just to find out.
+    fn is_supported(&self) -> bool {
+        true
+    }
+}
+
+/// Hotkey backend for sessions with no usable global-shortcut mechanism
+/// (e.g. Wayland in this version, which has no portal-based global-shortcut
+/// integration - see `global-hotkey-registration`'s spec). Every
+/// registration attempt reports `Unsupported` rather than hanging,
+/// panicking, or silently pretending to succeed.
+pub struct UnsupportedHotkeyBackend;
+
+impl UnsupportedHotkeyBackend {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for UnsupportedHotkeyBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HotkeyBackend for UnsupportedHotkeyBackend {
+    fn register(
+        &self,
+        _binding: HotkeyBinding,
+        _callback: Box<dyn Fn() + Send + Sync>,
+    ) -> Result<(), HotkeyError> {
+        Err(HotkeyError::Unsupported)
+    }
+
+    fn is_supported(&self) -> bool {
+        false
+    }
 }
 
 /// Real cross-desktop hotkey backend, backed by the `global-hotkey` crate.
@@ -214,6 +259,30 @@ mod tests {
         backend.press(binding);
 
         assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn registration_against_a_no_shortcut_mechanism_backend_returns_unsupported() {
+        let backend = UnsupportedHotkeyBackend::new();
+        let binding = parse_binding("Ctrl+Shift+V").unwrap();
+
+        let result = backend.register(binding, Box::new(|| {}));
+
+        assert!(matches!(result, Err(HotkeyError::Unsupported)));
+    }
+
+    #[test]
+    fn capabilities_report_hotkeys_unsupported_for_a_backend_with_no_shortcut_mechanism() {
+        let backend = UnsupportedHotkeyBackend::new();
+
+        assert!(!backend.is_supported());
+    }
+
+    #[test]
+    fn a_real_capable_backend_reports_hotkeys_supported() {
+        let backend = FakeHotkeyBackend::new();
+
+        assert!(backend.is_supported());
     }
 
     #[test]

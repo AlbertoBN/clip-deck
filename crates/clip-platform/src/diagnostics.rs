@@ -71,4 +71,32 @@ mod tests {
 
         assert_eq!(report.backend, "x11");
     }
+
+    #[test]
+    fn wayland_backends_report_identifies_itself_as_wayland() {
+        let backend = FakeBackend { capabilities: BackendCapabilities::default() };
+
+        let report = generate_report("wayland", &backend);
+
+        assert_eq!(report.backend, "wayland");
+    }
+
+    #[test]
+    fn a_mixed_capability_report_lists_each_capability_individually_rather_than_collapsing() {
+        let backend = FakeBackend {
+            capabilities: BackendCapabilities {
+                capture: true,
+                paste_simulation: true,
+                hotkeys: false,
+                focus_detection: false,
+            },
+        };
+
+        let report = generate_report("wayland", &backend);
+
+        assert!(report.capabilities.capture);
+        assert!(report.capabilities.paste_simulation);
+        assert!(!report.capabilities.hotkeys);
+        assert!(!report.capabilities.focus_detection);
+    }
 }

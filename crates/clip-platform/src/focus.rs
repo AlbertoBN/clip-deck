@@ -52,6 +52,34 @@ impl<C: X11Connection> FocusTracker<C> {
     }
 }
 
+/// Focus tracker for compositors that expose no focused-window information
+/// to clients at all - by design, per Wayland's security model, not a bug or
+/// a missing capability probe. `focused_app` always reports `None`.
+pub struct UnsupportedFocusTracker;
+
+impl UnsupportedFocusTracker {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn focused_app(&self) -> Option<AppContext> {
+        None
+    }
+
+    /// Whether this tracker can report focus information at all. Always
+    /// `false` - callers surface this via `BackendCapabilities` rather than
+    /// discovering it only after `focused_app` returns `None`.
+    pub fn is_supported(&self) -> bool {
+        false
+    }
+}
+
+impl Default for UnsupportedFocusTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,6 +96,20 @@ mod tests {
         let ctx = tracker.focused_app().unwrap();
         assert_eq!(ctx.app, "gnome-terminal");
         assert_eq!(ctx.window.as_deref(), Some("user@host: ~"));
+    }
+
+    #[test]
+    fn focused_app_returns_none_when_focus_detection_is_unsupported() {
+        let tracker = UnsupportedFocusTracker::new();
+
+        assert_eq!(tracker.focused_app(), None);
+    }
+
+    #[test]
+    fn capabilities_report_focus_detection_unsupported_on_a_compositor_with_no_focus_information() {
+        let tracker = UnsupportedFocusTracker::new();
+
+        assert!(!tracker.is_supported());
     }
 
     #[test]

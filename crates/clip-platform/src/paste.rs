@@ -38,11 +38,21 @@ fn resolve_paste_text(representations: &[ClipRepresentation], mode: PasteMode) -
 /// combination targeted at that window.
 pub struct PasteSimulator<C: X11Connection> {
     conn: C,
+    focus_detection_supported: bool,
 }
 
 impl<C: X11Connection> PasteSimulator<C> {
     pub fn new(conn: C) -> Self {
-        Self { conn }
+        Self { conn, focus_detection_supported: true }
+    }
+
+    /// Like `new`, but for a backend that reports focus-detection as
+    /// unsupported (e.g. a Wayland compositor with no focused-window
+    /// information available to clients): a missing captured window is not
+    /// treated as an error, since there was never any possibility of
+    /// capturing one - see `paste-simulation`'s modified spec.
+    pub fn without_focus_detection(conn: C) -> Self {
+        Self { conn, focus_detection_supported: false }
     }
 
     pub fn simulate_paste(
@@ -51,8 +61,20 @@ impl<C: X11Connection> PasteSimulator<C> {
         representations: &[ClipRepresentation],
         mode: PasteMode,
     ) -> Result<(), PlatformError> {
-        let window = target.ok_or(PlatformError::NoFocusedWindow)?;
         let text = resolve_paste_text(representations, mode).unwrap_or_default();
+
+        let window = match target {
+            Some(window) => window,
+            None if self.focus_detection_supported => return Err(PlatformError::NoFocusedWindow),
+            None => {
+                // No window to target and none was ever expected on this
+                // backend: place the content on the clipboard and stop -
+                // clipboard-only fallback, the user completes the paste
+                // manually.
+                self.conn.write_selection(&text);
+                return Ok(());
+            }
+        };
 
         self.conn.write_selection(&text);
         self.conn
@@ -146,6 +168,32 @@ mod tests {
         let result = simulator.simulate_paste(None, &representations, PasteMode::Auto);
 
         assert!(matches!(result, Err(PlatformError::NoFocusedWindow)));
+    }
+
+    #[test]
+    fn missing_focus_capture_still_errors_when_focus_detection_is_supported() {
+        // Regression guard: a backend that reports focus-detection as
+        // supported (the default) must keep erroring on a missing captured
+        // window, not silently degrade to clipboard-only.
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::new(conn);
+        let representations = vec![ClipRepresentation::new("text/plain", 0).with_text_value("hello")];
+
+        let result = simulator.simulate_paste(None, &representations, PasteMode::Auto);
+
+        assert!(matches!(result, Err(PlatformError::NoFocusedWindow)));
+    }
+
+    #[test]
+    fn missing_focus_capture_degrades_to_clipboard_only_when_focus_detection_is_unsupported() {
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::without_focus_detection(conn);
+        let representations = vec![ClipRepresentation::new("text/plain", 0).with_text_value("hello")];
+
+        simulator.simulate_paste(None, &representations, PasteMode::Auto).unwrap();
+
+        let ops = simulator.conn.ops_log();
+        assert_eq!(ops, vec![RecordedOp::WriteSelection("hello".to_string())]);
     }
 
     #[test]
