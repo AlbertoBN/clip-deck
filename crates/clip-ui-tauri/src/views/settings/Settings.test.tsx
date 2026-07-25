@@ -7,8 +7,20 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
-import type { AppSettings, DiagnosticsReport } from '../../state/types'
+import type { AppSettings, DiagnosticsReport, Rule } from '../../state/types'
 import { Settings } from './Settings'
+
+function rule(overrides: Partial<Rule> = {}): Rule {
+  return {
+    id: 'r1',
+    app_match: '1Password',
+    window_match: null,
+    mime_match: null,
+    action: 'exclude',
+    enabled: true,
+    ...overrides,
+  }
+}
 
 function settings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -32,6 +44,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (command: string) => {
     if (command === 'get_settings') return settings()
     if (command === 'get_diagnostics') return diagnostics()
+    if (command === 'list_rules') return []
     return undefined
   })
 })
@@ -41,6 +54,7 @@ describe('Settings', () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
       if (command === 'get_settings') return settings()
       if (command === 'get_diagnostics') return diagnostics()
+      if (command === 'list_rules') return []
       if (command === 'update_settings') return undefined
       return undefined
     })
@@ -65,6 +79,7 @@ describe('Settings', () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
       if (command === 'get_settings') return settings()
       if (command === 'get_diagnostics') return diagnostics()
+      if (command === 'list_rules') return []
       if (command === 'update_settings') return Promise.reject('invalid hotkey binding')
       return undefined
     })
@@ -84,6 +99,7 @@ describe('Settings', () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
       if (command === 'get_settings') return settings()
       if (command === 'get_diagnostics') return diagnostics({ hotkeys: false })
+      if (command === 'list_rules') return []
       return undefined
     })
 
@@ -92,6 +108,19 @@ describe('Settings', () => {
     await waitFor(() => expect(screen.getByText(/hotkeys/i)).toBeInTheDocument())
     const row = screen.getByText(/hotkeys/i).closest('li')
     expect(row).toHaveTextContent(/unsupported/i)
+  })
+
+  it('shows a rule returned by ListRules on initial mount, before any create/delete action', async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'get_settings') return settings()
+      if (command === 'get_diagnostics') return diagnostics()
+      if (command === 'list_rules') return [rule({ id: 'prior', app_match: 'Bitwarden' })]
+      return undefined
+    })
+
+    render(<Settings />)
+
+    await waitFor(() => expect(screen.getByText('Bitwarden')).toBeInTheDocument())
   })
 
   it('creating a rule issues SaveRule with the entered app match', async () => {

@@ -59,6 +59,10 @@ pub async fn list_groups_with(client: &dyn Client) -> Result<Vec<Group>, String>
     response_payload(client.call(Command::ListGroups).await)
 }
 
+pub async fn list_rules_with(client: &dyn Client) -> Result<Vec<Rule>, String> {
+    response_payload(client.call(Command::ListRules).await)
+}
+
 pub async fn save_rule_with(client: &dyn Client, rule: Rule) -> Result<(), String> {
     response_ok(client.call(Command::SaveRule { rule }).await)
 }
@@ -134,6 +138,11 @@ pub async fn list_groups(state: tauri::State<'_, ClientHandle>) -> Result<Vec<Gr
 }
 
 #[tauri::command]
+pub async fn list_rules(state: tauri::State<'_, ClientHandle>) -> Result<Vec<Rule>, String> {
+    list_rules_with(state.0.as_ref()).await
+}
+
+#[tauri::command]
 pub async fn save_rule(state: tauri::State<'_, ClientHandle>, rule: Rule) -> Result<(), String> {
     save_rule_with(state.0.as_ref(), rule).await
 }
@@ -178,6 +187,19 @@ mod tests {
         let result = super::search_clips_with(&client, "".to_string(), Default::default(), 20, 0).await.unwrap();
 
         assert_eq!(result, vec![clip]);
+    }
+
+    #[tokio::test]
+    async fn list_rules_returns_the_fakes_canned_rule_list() {
+        use clip_core::models::{Rule, RuleAction};
+
+        let client = FakeClient::new();
+        let rule = Rule::new("r1", "1Password", None, None, RuleAction::Exclude);
+        client.push_response(Response::ok("test", serde_json::to_value(vec![rule.clone()]).unwrap()));
+
+        let result = super::list_rules_with(&client).await.unwrap();
+
+        assert_eq!(result, vec![rule]);
     }
 
     #[tokio::test]

@@ -6,8 +6,13 @@ import { invoke } from '@tauri-apps/api/core'
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
+
+let eventHandler: ((event: { payload: unknown }) => void) | undefined
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn().mockResolvedValue(() => {}),
+  listen: vi.fn().mockImplementation(async (_channel: string, cb: (event: { payload: unknown }) => void) => {
+    eventHandler = cb
+    return () => {}
+  }),
 }))
 
 const hide = vi.fn().mockResolvedValue(undefined)
@@ -46,6 +51,7 @@ beforeEach(() => {
   useClipStore.setState({ clips: [], connectionState: 'connected' })
   vi.mocked(invoke).mockReset()
   hide.mockClear()
+  eventHandler = undefined
 })
 
 describe('Popup', () => {
@@ -111,6 +117,24 @@ describe('Popup', () => {
 
     await waitFor(() => expect(hide).toHaveBeenCalled())
     expect(invoke).toHaveBeenCalledWith('paste_clip', { id: 'c1', mode: 'auto' })
+  })
+
+  it('re-focuses the search field and re-searches on a repeat HotkeyPressed event', async () => {
+    vi.mocked(invoke).mockResolvedValue([])
+
+    render(<Popup />)
+    await waitFor(() => expect(screen.getByLabelText(/search/i)).toHaveFocus())
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('search_clips', expect.objectContaining({ query: '' })))
+
+    screen.getByLabelText(/search/i).blur()
+    vi.mocked(invoke).mockClear()
+
+    await act(async () => {
+      eventHandler?.({ payload: { type: 'HotkeyPressed' } })
+    })
+
+    await waitFor(() => expect(screen.getByLabelText(/search/i)).toHaveFocus())
+    expect(invoke).toHaveBeenCalledWith('search_clips', expect.objectContaining({ query: '' }))
   })
 
   it('issues a debounced SearchClips with the typed query', async () => {
