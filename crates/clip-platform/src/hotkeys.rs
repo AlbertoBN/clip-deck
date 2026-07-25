@@ -38,7 +38,9 @@ pub fn parse_binding(spec: &str) -> Result<HotkeyBinding, HotkeyError> {
             "Super" | "Meta" | "Cmd" => binding.super_key = true,
             other => {
                 let mut chars = other.chars();
-                let single = chars.next().filter(|c| c.is_ascii_alphanumeric() && chars.next().is_none());
+                let single = chars
+                    .next()
+                    .filter(|c| (c.is_ascii_alphanumeric() || is_supported_punctuation(*c)) && chars.next().is_none());
                 match single {
                     Some(c) if !key_set => {
                         binding.key = c.to_ascii_uppercase();
@@ -54,6 +56,12 @@ pub fn parse_binding(spec: &str) -> Result<HotkeyBinding, HotkeyError> {
         return Err(HotkeyError::InvalidBinding(spec.to_string()));
     }
     Ok(binding)
+}
+
+/// Punctuation keys with a corresponding `global_hotkey::hotkey::Code`
+/// variant (mirrors the set handled by `char_to_code`).
+fn is_supported_punctuation(c: char) -> bool {
+    matches!(c, '`' | '-' | '=' | '[' | ']' | '\\' | ',' | '.' | '\'' | ';' | '/')
 }
 
 /// Registration backend seam: implemented once for real via the
@@ -179,13 +187,30 @@ fn to_global_hotkey(binding: HotkeyBinding) -> Result<global_hotkey::hotkey::Hot
 }
 
 fn char_to_code(ch: char) -> Result<global_hotkey::hotkey::Code, HotkeyError> {
-    let name = match ch.to_ascii_uppercase() {
-        c @ 'A'..='Z' => format!("Key{c}"),
-        c @ '0'..='9' => format!("Digit{c}"),
-        other => return Err(HotkeyError::InvalidBinding(other.to_string())),
-    };
-    global_hotkey::hotkey::Code::from_str(&name)
-        .map_err(|_| HotkeyError::InvalidBinding(ch.to_string()))
+    use global_hotkey::hotkey::Code;
+
+    match ch {
+        c @ 'A'..='Z' | c @ 'a'..='z' => {
+            let name = format!("Key{}", c.to_ascii_uppercase());
+            Code::from_str(&name).map_err(|_| HotkeyError::InvalidBinding(ch.to_string()))
+        }
+        c @ '0'..='9' => {
+            let name = format!("Digit{c}");
+            Code::from_str(&name).map_err(|_| HotkeyError::InvalidBinding(ch.to_string()))
+        }
+        '`' => Ok(Code::Backquote),
+        '-' => Ok(Code::Minus),
+        '=' => Ok(Code::Equal),
+        '[' => Ok(Code::BracketLeft),
+        ']' => Ok(Code::BracketRight),
+        '\\' => Ok(Code::Backslash),
+        ',' => Ok(Code::Comma),
+        '.' => Ok(Code::Period),
+        '\'' => Ok(Code::Quote),
+        ';' => Ok(Code::Semicolon),
+        '/' => Ok(Code::Slash),
+        other => Err(HotkeyError::InvalidBinding(other.to_string())),
+    }
 }
 
 #[cfg(test)]
@@ -246,6 +271,28 @@ mod tests {
     #[test]
     fn an_invalid_binding_string_is_rejected_at_parse_time() {
         assert!(parse_binding("NotAKey+++").is_err());
+    }
+
+    #[test]
+    fn a_binding_with_a_punctuation_key_parses_successfully() {
+        let binding = parse_binding("Ctrl+`").unwrap();
+        assert!(binding.ctrl);
+        assert_eq!(binding.key, '`');
+    }
+
+    #[test]
+    fn punctuation_keys_map_to_their_global_hotkey_codes() {
+        assert_eq!(char_to_code('`').unwrap(), global_hotkey::hotkey::Code::Backquote);
+        assert_eq!(char_to_code('-').unwrap(), global_hotkey::hotkey::Code::Minus);
+        assert_eq!(char_to_code('=').unwrap(), global_hotkey::hotkey::Code::Equal);
+        assert_eq!(char_to_code('[').unwrap(), global_hotkey::hotkey::Code::BracketLeft);
+        assert_eq!(char_to_code(']').unwrap(), global_hotkey::hotkey::Code::BracketRight);
+        assert_eq!(char_to_code('\\').unwrap(), global_hotkey::hotkey::Code::Backslash);
+        assert_eq!(char_to_code(',').unwrap(), global_hotkey::hotkey::Code::Comma);
+        assert_eq!(char_to_code('.').unwrap(), global_hotkey::hotkey::Code::Period);
+        assert_eq!(char_to_code('\'').unwrap(), global_hotkey::hotkey::Code::Quote);
+        assert_eq!(char_to_code(';').unwrap(), global_hotkey::hotkey::Code::Semicolon);
+        assert_eq!(char_to_code('/').unwrap(), global_hotkey::hotkey::Code::Slash);
     }
 
     #[test]

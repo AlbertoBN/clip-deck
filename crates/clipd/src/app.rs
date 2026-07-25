@@ -41,6 +41,11 @@ pub trait Backend: Send + Sync {
     fn start(&self, on_capture: Box<dyn Fn(ClipboardSnapshot) + Send + Sync>) -> Result<(), PlatformError>;
     fn focused_app(&self) -> Option<AppContext>;
     fn simulate_paste(&self, representations: &[ClipRepresentation], mode: PasteMode) -> Result<(), PlatformError>;
+    /// Places the clip's plain-text content on the clipboard only - no
+    /// focused-window lookup, no key synthesis - so the user can paste it
+    /// manually wherever they choose, per `paste-simulation`'s copy-only
+    /// mode.
+    fn copy_to_clipboard(&self, representations: &[ClipRepresentation]) -> Result<(), PlatformError>;
     fn capabilities(&self) -> BackendCapabilities;
 }
 
@@ -191,6 +196,66 @@ impl Backend for X11DaemonBackend {
         self.paste.paste_to_focused_window(representations, mode)
     }
 
+    fn copy_to_clipboard(&self, representations: &[ClipRepresentation]) -> Result<(), PlatformError> {
+        let text = clip_platform::paste::resolve_paste_text(representations, PasteMode::PlainText).unwrap_or_default();
+        self.paste.copy_to_clipboard(&text);
+        Ok(())
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        self.capture.capabilities()
+    }
+}
+
+/// Detects whether the process is running under a Wayland session, per
+/// `daemon-lifecycle`'s session-based backend-selection spec. Takes the
+/// `WAYLAND_DISPLAY` value as a parameter (rather than reading `std::env`
+/// directly) so this stays a pure, directly-testable predicate; `main` reads
+/// the real environment variable once and calls this.
+pub(crate) fn is_wayland_session(wayland_display: Option<&str>) -> bool {
+    wayland_display.is_some()
+}
+
+/// Real Wayland-backed `Backend`: a capture watch loop over
+/// `wlr-data-control`, plus an always-unsupported focus tracker (Wayland's
+/// security model withholds focused-window info from clients). `simulate_paste`
+/// places content on the clipboard only - see `paste-simulation`'s Wayland
+/// scenario - no synthetic key delivery is attempted, since Wayland has no
+/// input-synthesis mechanism wired in this workspace.
+pub struct WaylandDaemonBackend {
+    capture: clip_platform::wayland::WaylandBackend<clip_platform::wayland::RealWaylandConnection>,
+    focus: clip_platform::focus::UnsupportedFocusTracker,
+}
+
+impl WaylandDaemonBackend {
+    pub fn connect() -> anyhow::Result<Self> {
+        let conn = clip_platform::wayland::RealWaylandConnection::connect()
+            .map_err(|e| anyhow::anyhow!("failed to open Wayland connection: {e}"))?;
+        let capture = clip_platform::wayland::WaylandBackend::new(conn)
+            .map_err(|e| anyhow::anyhow!("failed to construct Wayland backend: {e}"))?;
+        Ok(Self { capture, focus: clip_platform::focus::UnsupportedFocusTracker::new() })
+    }
+}
+
+impl Backend for WaylandDaemonBackend {
+    fn start(&self, on_capture: Box<dyn Fn(ClipboardSnapshot) + Send + Sync>) -> Result<(), PlatformError> {
+        self.capture.start(on_capture)
+    }
+
+    fn focused_app(&self) -> Option<AppContext> {
+        self.focus.focused_app()
+    }
+
+    fn simulate_paste(&self, representations: &[ClipRepresentation], mode: PasteMode) -> Result<(), PlatformError> {
+        let text = clip_platform::paste::resolve_paste_text(representations, mode).unwrap_or_default();
+        self.capture.set_current(&text)
+    }
+
+    fn copy_to_clipboard(&self, representations: &[ClipRepresentation]) -> Result<(), PlatformError> {
+        let text = clip_platform::paste::resolve_paste_text(representations, PasteMode::PlainText).unwrap_or_default();
+        self.capture.set_current(&text)
+    }
+
     fn capabilities(&self) -> BackendCapabilities {
         self.capture.capabilities()
     }
@@ -284,7 +349,21 @@ pub async fn run(
         CommandHandler::new(store.clone(), backend.clone(), events.clone(), watch_loop.clone(), backend_name);
     handler_cell.set(command_handler).ok();
 
-    watch_loop.start(backend.clone(), store.clone(), events.clone())?;
+    // `Backend::start()` blocks the calling thread for the daemon's entire
+    // lifetime on a real connection (a blocking event-channel `recv()` loop -
+    // see `x11::real`/`wayland::real`), so it must run on a dedicated
+    // blocking thread rather than inline here - otherwise this task would
+    // never reach `server.run_with_shutdown` below, and the IPC server would
+    // never actually serve a single request.
+    let capture_backend = backend.clone();
+    let capture_store = store.clone();
+    let capture_events = events.clone();
+    let capture_watch_loop = watch_loop.clone();
+    tokio::task::spawn_blocking(move || {
+        if let Err(error) = capture_watch_loop.start(capture_backend, capture_store, capture_events) {
+            tracing::error!(%error, "clipboard watch loop exited with an error; capture will no longer be forwarded");
+        }
+    });
     tokio::spawn(crate::jobs::run_retention_job(store.clone(), std::time::Duration::from_secs(3600)));
     register_hotkey(store.as_ref(), &hotkeys, events.clone());
 
@@ -470,6 +549,8 @@ pub(crate) mod fakes {
         fail_paste: AtomicBool,
         paste_delay: Mutex<std::time::Duration>,
         capabilities: Mutex<BackendCapabilities>,
+        blocks_on_start: AtomicBool,
+        copied_text: Mutex<Option<String>>,
     }
 
     impl FakeBackend {
@@ -492,6 +573,24 @@ pub(crate) mod fakes {
             *self.capabilities.lock().unwrap() = capabilities;
         }
 
+        /// Test helper: makes `start` block the calling thread for a bounded
+        /// but generous interval after registering the callback, mirroring
+        /// the real X11/Wayland connections' `start()` (a blocking
+        /// `Receiver::recv()` loop that only returns once the daemon shuts
+        /// down) - so a regression test can confirm callers don't assume
+        /// `start()` returns promptly. Bounded (rather than truly forever)
+        /// so a misbehaving caller still lets the test process's runtime
+        /// shut down cleanly instead of hanging the test suite itself.
+        pub(crate) fn set_blocks_on_start(&self, blocks: bool) {
+            self.blocks_on_start.store(blocks, Ordering::SeqCst);
+        }
+
+        /// Test helper: the plain-text content passed to the most recent
+        /// `copy_to_clipboard` call, if any.
+        pub(crate) fn copied_text(&self) -> Option<String> {
+            self.copied_text.lock().unwrap().clone()
+        }
+
         /// Test helper: simulates the backend emitting a capture event.
         pub(crate) fn emit_capture(&self, snapshot: ClipboardSnapshot) {
             if let Some(callback) = self.capture_callback.lock().unwrap().as_ref() {
@@ -503,6 +602,9 @@ pub(crate) mod fakes {
     impl Backend for FakeBackend {
         fn start(&self, on_capture: Box<dyn Fn(ClipboardSnapshot) + Send + Sync>) -> Result<(), PlatformError> {
             *self.capture_callback.lock().unwrap() = Some(on_capture);
+            if self.blocks_on_start.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
             Ok(())
         }
 
@@ -520,6 +622,12 @@ pub(crate) mod fakes {
             } else {
                 Ok(())
             }
+        }
+
+        fn copy_to_clipboard(&self, representations: &[ClipRepresentation]) -> Result<(), PlatformError> {
+            let text = clip_platform::paste::resolve_paste_text(representations, PasteMode::PlainText).unwrap_or_default();
+            *self.copied_text.lock().unwrap() = Some(text);
+            Ok(())
         }
 
         fn capabilities(&self) -> BackendCapabilities {
@@ -656,6 +764,16 @@ mod tests {
         assert!(events.events().is_empty());
     }
 
+    #[test]
+    fn a_wayland_display_value_selects_the_wayland_session() {
+        assert!(is_wayland_session(Some("wayland-0")));
+    }
+
+    #[test]
+    fn no_wayland_display_selects_the_x11_session() {
+        assert!(!is_wayland_session(None));
+    }
+
     fn temp_db_and_socket() -> (tempfile::TempDir, String, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("clipdeck.sqlite3").to_str().unwrap().to_string();
@@ -762,6 +880,54 @@ mod tests {
         }
 
         run_handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_ipc_server_answers_commands_even_when_backend_start_never_returns() {
+        // Regression test: the real X11/Wayland connections' `start()` blocks
+        // the calling thread for the daemon's entire lifetime (a blocking
+        // `Receiver::recv()` loop - see `x11::real`/`wayland::real`). `run()`
+        // must not let that starve the IPC server of ever being reached.
+        let (_dir, db_path, socket_path) = temp_db_and_socket();
+        let backend = Arc::new(FakeBackend::new());
+        backend.set_blocks_on_start(true);
+        let backend_dyn: Arc<dyn Backend> = backend.clone();
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let run_handle = tokio::spawn(run(db_path, socket_path.clone(), backend_dyn, "fake".to_string(), fake_hotkeys(), async {
+            let _ = shutdown_rx.await;
+        }));
+
+        wait_until_connectable(&socket_path).await;
+        let mut client = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
+
+        use tokio::io::AsyncWriteExt;
+        let request = clip_ipc::protocol::Request::new("r1", clip_ipc::protocol::Command::GetSettings);
+        let line = serde_json::to_string(&request).unwrap() + "\n";
+        client.write_all(line.as_bytes()).await.unwrap();
+
+        let (read, _write) = client.into_split();
+        let mut reader = tokio::io::BufReader::new(read);
+        use tokio::io::AsyncBufReadExt;
+        let mut response_line = String::new();
+        // Well under the fake's 300ms simulated block: this must resolve
+        // promptly, proving `run()` doesn't wait for `Backend::start()` to
+        // return before it starts serving IPC commands.
+        let read_result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), reader.read_line(&mut response_line)).await;
+
+        let _ = shutdown_tx.send(());
+        run_handle.await.unwrap().unwrap();
+
+        assert!(
+            read_result.is_ok(),
+            "expected a prompt response even though Backend::start() hasn't returned yet; the server never got to start serving"
+        );
+        let message: clip_ipc::protocol::ServerMessage = serde_json::from_str(response_line.trim_end()).unwrap();
+        assert!(
+            matches!(message, clip_ipc::protocol::ServerMessage::Response(clip_ipc::protocol::Response::Ok { .. })),
+            "expected an Ok response, got {message:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

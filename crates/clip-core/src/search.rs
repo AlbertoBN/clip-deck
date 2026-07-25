@@ -47,6 +47,7 @@ pub fn parse_query(input: &str) -> ParsedQuery {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct SearchFilters {
     pub mime_family: Option<crate::mime::MimeFamily>,
     pub pinned_only: bool,
@@ -58,6 +59,17 @@ pub struct SearchFilters {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_filters_deserializes_with_missing_fields_defaulted() {
+        // The TS `SearchFilters` interface marks every field optional and
+        // callers routinely send a partial object (e.g. just `group_id` and
+        // `pinned_only`); this must deserialize instead of erroring on
+        // absent fields.
+        let json = r#"{"group_id": null, "pinned_only": true}"#;
+        let filters: SearchFilters = serde_json::from_str(json).unwrap();
+        assert_eq!(filters, SearchFilters { pinned_only: true, ..SearchFilters::default() });
+    }
 
     #[test]
     fn simple_query_splits_into_terms() {

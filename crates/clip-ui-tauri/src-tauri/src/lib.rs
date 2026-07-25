@@ -41,6 +41,24 @@ pub fn run() {
                 .text("quit", "Quit")
                 .build()?;
 
+            // Closing a window via its [X] button would otherwise destroy it
+            // outright, leaving the tray's "Show ClipDeck"/"Settings" items
+            // with nothing to show (`get_webview_window` returns `None`
+            // after destruction). Intercept the close request and hide
+            // instead, so each window can always be brought back from the
+            // tray.
+            for label in ["main", "settings"] {
+                if let Some(window) = app.get_webview_window(label) {
+                    let window_to_hide = window.clone();
+                    window.on_window_event(move |event| {
+                        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                            api.prevent_close();
+                            let _ = window_to_hide.hide();
+                        }
+                    });
+                }
+            }
+
             TrayIconBuilder::new()
                 .menu(&menu)
                 .on_menu_event(move |app_handle, event| {
@@ -51,6 +69,11 @@ pub fn run() {
                             tauri::async_runtime::spawn(async move {
                                 let tray_state = app_handle.state::<TrayState>();
                                 let _ = tray::handle_pause_toggle(client.as_ref(), tray_state.inner()).await;
+                            });
+                        }
+                        "clear_history" => {
+                            tauri::async_runtime::spawn(async move {
+                                let _ = tray::handle_clear_history(client.as_ref()).await;
                             });
                         }
                         "quit" => {
@@ -65,6 +88,12 @@ pub fn run() {
                         "hide" => {
                             if let Some(window) = app_handle.get_webview_window("main") {
                                 let _ = window.hide();
+                            }
+                        }
+                        "settings" => {
+                            if let Some(window) = app_handle.get_webview_window("settings") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
                             }
                         }
                         _ => {}
@@ -95,6 +124,7 @@ pub fn run() {
             commands::search_clips,
             commands::get_clip,
             commands::paste_clip,
+            commands::copy_clip,
             commands::pin_clip,
             commands::assign_group,
             commands::delete_clip,

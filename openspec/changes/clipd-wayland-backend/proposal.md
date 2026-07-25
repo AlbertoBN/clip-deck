@@ -48,3 +48,22 @@ always assuming X11.
   other wlroots-based compositors) for capture/paste to work at all; on a non-supporting compositor,
   `WaylandDaemonBackend` construction fails clearly (per `wayland-clipboard-capture`'s existing spec),
   which `main.rs` must surface as a startup error rather than silently falling back to X11.
+
+### Amendment (discovered during implementation)
+
+- **Backend selection is X11-first, not session-type-first.** Manual verification on the requesting
+  user's own machine (GNOME Shell/Mutter, a non-wlroots compositor) revealed that `WAYLAND_DISPLAY`-only
+  detection was a real regression: `$DISPLAY` was also set and reachable via XWayland, so before this
+  change `X11DaemonBackend` connected successfully through it - but the original design would have
+  switched that same session straight to `WaylandDaemonBackend`, which fails outright on Mutter (no
+  `wlr-data-control` support), leaving a previously-working session unable to start at all.
+- `main.rs` now attempts `X11DaemonBackend::connect()` first, unconditionally (covering native X11 *and*
+  XWayland-backed Wayland sessions transparently). Only when that connection attempt fails does it check
+  `is_wayland_session` and fall back to `WaylandDaemonBackend` + `UnsupportedHotkeyBackend`; if neither is
+  available, startup fails with the original X11 connection error, same as pre-this-change behavior for a
+  no-display environment.
+- `is_wayland_session` itself is unchanged (still a pure `WAYLAND_DISPLAY`-presence predicate); only its
+  role shifted, from "the" selector to a fallback-eligibility check consulted after X11 connection fails.
+- This means a genuinely wlroots-only session (no XWayland, or XWayland unreachable) still gets the native
+  Wayland backend exactly as originally designed - the amendment only reorders preference to avoid
+  regressing sessions where XWayland already provides a working path.
