@@ -67,6 +67,12 @@ impl CommandHandler {
                 self.store.touch_last_used(&id).map_err(|e| e.to_string())?;
                 Ok(serde_json::json!({"ok": true}))
             }
+            Command::CopyClip { id } => {
+                let clip = self.store.get_clip(&id).map_err(|e| e.to_string())?.ok_or("clip not found")?;
+                self.backend.copy_to_clipboard(&clip.representations).map_err(|e| e.to_string())?;
+                self.store.touch_last_used(&id).map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({"ok": true}))
+            }
             Command::PinClip { id, pinned } => {
                 self.store.set_pinned(&id, pinned).map_err(|e| e.to_string())?;
                 self.events.publish(Event::ClipUpdated { clip_id: id });
@@ -188,6 +194,29 @@ mod tests {
 
         assert!(result.is_err());
         assert!(store.get_clip("c1").unwrap().unwrap().last_used_at.is_none());
+    }
+
+    #[test]
+    fn successful_copy_updates_last_used_at() {
+        let (handler, store, _backend, _events) = handler();
+        store.insert_clip(&clip_with_text("c1", "hello")).unwrap();
+
+        let response = handler.handle(Command::CopyClip { id: "c1".to_string() }).unwrap();
+
+        assert_eq!(response, serde_json::json!({"ok": true}));
+        assert!(store.get_clip("c1").unwrap().unwrap().last_used_at.is_some());
+    }
+
+    #[test]
+    fn copy_resolves_plain_text_even_when_a_richer_representation_exists() {
+        let (handler, store, backend, _events) = handler();
+        let text = clip_core::models::ClipRepresentation::new("text/plain", 0).with_text_value("hi");
+        let html = clip_core::models::ClipRepresentation::new("text/html", 1).with_text_value("<b>hi</b>");
+        store.insert_clip(&clip_core::models::Clip::new("c1", "hash1", "text/plain", vec![text, html])).unwrap();
+
+        handler.handle(Command::CopyClip { id: "c1".to_string() }).unwrap();
+
+        assert_eq!(backend.copied_text(), Some("hi".to_string()));
     }
 
     #[test]

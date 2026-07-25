@@ -39,6 +39,10 @@ pub async fn paste_clip_with(client: &dyn Client, id: String, mode: PasteMode) -
     response_ok(client.call(Command::PasteClip { id, mode }).await)
 }
 
+pub async fn copy_clip_with(client: &dyn Client, id: String) -> Result<(), String> {
+    response_ok(client.call(Command::CopyClip { id }).await)
+}
+
 pub async fn pin_clip_with(client: &dyn Client, id: String, pinned: bool) -> Result<(), String> {
     response_ok(client.call(Command::PinClip { id, pinned }).await)
 }
@@ -106,6 +110,11 @@ pub async fn get_clip(state: tauri::State<'_, ClientHandle>, id: String) -> Resu
 #[tauri::command]
 pub async fn paste_clip(state: tauri::State<'_, ClientHandle>, id: String, mode: PasteMode) -> Result<(), String> {
     paste_clip_with(state.0.as_ref(), id, mode).await
+}
+
+#[tauri::command]
+pub async fn copy_clip(state: tauri::State<'_, ClientHandle>, id: String) -> Result<(), String> {
+    copy_clip_with(state.0.as_ref(), id).await
 }
 
 #[tauri::command]
@@ -200,6 +209,17 @@ mod tests {
         let result = super::list_rules_with(&client).await.unwrap();
 
         assert_eq!(result, vec![rule]);
+    }
+
+    #[tokio::test]
+    async fn copy_clip_with_calls_copy_clip_and_returns_ok() {
+        let client = FakeClient::new();
+        client.push_response(Response::ok("test", serde_json::json!({"ok": true})));
+
+        let result = super::copy_clip_with(&client, "c1".to_string()).await;
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(client.calls(), vec![clip_ipc::protocol::Command::CopyClip { id: "c1".to_string() }]);
     }
 
     #[tokio::test]

@@ -17,7 +17,7 @@ const PASTE_KEY_BINDING: &str = "ctrl+v";
 /// representation's plain-text-rendered form (`preview_text`, then
 /// `text_value`) when nothing matches the preferred mime type, matching
 /// Milestone-1's single-representation behavior.
-fn resolve_paste_text(representations: &[ClipRepresentation], mode: PasteMode) -> Option<String> {
+pub fn resolve_paste_text(representations: &[ClipRepresentation], mode: PasteMode) -> Option<String> {
     let first = representations.first()?;
     match mode {
         PasteMode::PlainText => representations
@@ -83,6 +83,14 @@ impl<C: X11Connection> PasteSimulator<C> {
         Ok(())
     }
 
+    /// Places `text` on the clipboard only - no focused-window lookup, no
+    /// key synthesis. For callers that want to let the user paste manually
+    /// wherever they choose, rather than targeting whatever happens to be
+    /// focused right now (see `paste-simulation`'s copy-only mode).
+    pub fn copy_to_clipboard(&self, text: &str) {
+        self.conn.write_selection(text);
+    }
+
     /// Like `simulate_paste`, but targets whichever window is currently
     /// focused at call time, rather than a caller-supplied target. Useful
     /// when there is no separate "popup activation" moment to capture a
@@ -101,6 +109,17 @@ impl<C: X11Connection> PasteSimulator<C> {
 mod tests {
     use super::*;
     use crate::x11::fake::{FakeX11Connection, RecordedOp};
+
+    #[test]
+    fn copy_to_clipboard_writes_the_given_text_without_synthesizing_any_key() {
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::new(conn);
+
+        simulator.copy_to_clipboard("hello");
+
+        let ops = simulator.conn.ops_log();
+        assert_eq!(ops, vec![RecordedOp::WriteSelection("hello".to_string())]);
+    }
 
     #[test]
     fn content_is_placed_on_the_clipboard_before_the_key_combination_is_synthesized() {

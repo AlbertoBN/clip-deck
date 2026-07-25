@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use clip_ipc::protocol::Command;
+use clip_ipc::protocol::{ClearScope, Command};
 
 use crate::client::Client;
 
@@ -46,6 +46,15 @@ pub async fn handle_pause_toggle(client: &dyn Client, tray_state: &TrayState) ->
     }
 }
 
+/// Clears clip history, preserving pinned clips - the same default scope the
+/// Manager's own "Clear history" button uses.
+pub async fn handle_clear_history(client: &dyn Client) -> Result<(), String> {
+    match client.call(Command::ClearHistory { scope: ClearScope::ExcludingPinned }).await {
+        clip_ipc::protocol::Response::Ok { .. } => Ok(()),
+        clip_ipc::protocol::Response::Err { error, .. } => Err(error),
+    }
+}
+
 /// Issues the quit action via an injectable `exit` function, so tests can
 /// assert it was invoked without actually terminating the test process.
 pub fn handle_quit(exit: &dyn Fn()) {
@@ -80,6 +89,16 @@ mod tests {
         handle_pause_toggle(&client, &tray_state).await.unwrap();
 
         assert_eq!(client.calls(), vec![Command::PauseCapture { paused: false }]);
+    }
+
+    #[tokio::test]
+    async fn selecting_clear_history_issues_clear_history_excluding_pinned() {
+        let client = FakeClient::new();
+        client.push_response(Response::ok("test", serde_json::json!({"ok": true})));
+
+        handle_clear_history(&client).await.unwrap();
+
+        assert_eq!(client.calls(), vec![Command::ClearHistory { scope: ClearScope::ExcludingPinned }]);
     }
 
     #[test]

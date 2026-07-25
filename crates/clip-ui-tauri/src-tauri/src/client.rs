@@ -92,10 +92,22 @@ mod tests {
         let emitted_clone = emitted.clone();
 
         spawn_event_forwarder(client.clone(), move |event| emitted_clone.lock().unwrap().push(event));
-        tokio::task::yield_now().await;
 
-        client.publish_event(Event::HotkeyPressed);
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        // `spawn_event_forwarder` uses `tauri::async_runtime::spawn`, which
+        // may run the forwarding task on a different runtime/thread than
+        // this test's own - a single yield plus a fixed sleep isn't a
+        // reliable enough handoff for that subscribe-then-publish race, so
+        // retry publishing until the event is actually observed (bounded by
+        // a generous deadline) rather than assuming a fixed delay suffices.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            client.publish_event(Event::HotkeyPressed);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            if !emitted.lock().unwrap().is_empty() {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "event was never forwarded within the timeout");
+        }
 
         assert_eq!(emitted.lock().unwrap().clone(), vec![Event::HotkeyPressed]);
     }

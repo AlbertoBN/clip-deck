@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
+  convertFileSrc: vi.fn((path: string) => `asset://${path}`),
 }))
 
 let eventHandler: ((event: { payload: unknown }) => void) | undefined
@@ -120,6 +121,97 @@ describe('Manager', () => {
 
     await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(1))
     expect(screen.getByText('clip pinned')).toBeInTheDocument()
+  })
+
+  it('moves selection down on ArrowDown', async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'list_groups') return []
+      if (command === 'search_clips') return [clip('c1'), clip('c2')]
+      return undefined
+    })
+    const user = userEvent.setup()
+    render(<Manager />)
+    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(2))
+
+    await user.keyboard('{ArrowDown}')
+
+    const items = screen.getAllByRole('listitem')
+    expect(items[1]).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('scrolls the newly selected clip into view on ArrowDown', async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'list_groups') return []
+      if (command === 'search_clips') return [clip('c1'), clip('c2')]
+      return undefined
+    })
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    const user = userEvent.setup()
+    render(<Manager />)
+    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(2))
+    scrollIntoView.mockClear()
+
+    await user.keyboard('{ArrowDown}')
+
+    expect(scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('copies the selected clip to the clipboard on Enter', async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'list_groups') return []
+      if (command === 'search_clips') return [clip('c1')]
+      if (command === 'copy_clip') return undefined
+      return undefined
+    })
+    const user = userEvent.setup()
+    render(<Manager />)
+    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(1))
+
+    await user.keyboard('{Enter}')
+
+    expect(invoke).toHaveBeenCalledWith('copy_clip', { id: 'c1' })
+  })
+
+  it('shows a thumbnail for an image clip instead of a blank row', async () => {
+    const imageClip = clip('img1', {
+      display_text: null,
+      primary_mime: 'image/png',
+      representations: [
+        {
+          mime_type: 'image/png',
+          text_value: null,
+          blob_path: '/blobs/full.png',
+          preview_text: null,
+          width: 800,
+          height: 600,
+          byte_size: 12345,
+          ordinal: 0,
+          is_preview: false,
+        },
+        {
+          mime_type: 'image/png',
+          text_value: null,
+          blob_path: '/blobs/thumb.png',
+          preview_text: null,
+          width: 200,
+          height: 150,
+          byte_size: 456,
+          ordinal: 1,
+          is_preview: true,
+        },
+      ],
+    })
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'list_groups') return []
+      if (command === 'search_clips') return [imageClip]
+      return undefined
+    })
+
+    render(<Manager />)
+
+    const img = await screen.findByRole('img')
+    expect(img).toHaveAttribute('src', 'asset:///blobs/thumb.png')
   })
 
   it('shows a newly captured clip live without a manual refresh', async () => {

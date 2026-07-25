@@ -29,10 +29,25 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "resizable": false
+      },
+      {
+        "label": "settings",
+        "title": "ClipDeck Settings",
+        "width": 500,
+        "height": 600,
+        "visible": false,
+        "resizable": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["$HOME/**"],
+          "requireLiteralLeadingDot": false
+        }
+      }
     }
   },
   "bundle": {

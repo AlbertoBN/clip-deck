@@ -94,8 +94,13 @@ pub struct AppPaths {
 }
 
 impl AppPaths {
-    /// Resolves the application's standard directories via `directories`,
-    /// or under `CLIPDECK_TEST_HOME` if that environment variable is set.
+    /// Resolves the application's standard directories via `directories`, or
+    /// under `CLIPDECK_TEST_HOME` if that environment variable is set (all
+    /// three directories together, as sibling subdirectories of one root).
+    /// Independently of that, `CLIPDECK_CONFIG_DIR`/`CLIPDECK_DATA_DIR`/
+    /// `CLIPDECK_CACHE_DIR` each override just their own directory - handy
+    /// for pinning/inspecting individual locations (e.g. via a local `.env`
+    /// file) without adopting `CLIPDECK_TEST_HOME`'s single-root layout.
     pub fn resolve() -> Self {
         if let Ok(root) = std::env::var("CLIPDECK_TEST_HOME") {
             let root = PathBuf::from(root);
@@ -108,9 +113,15 @@ impl AppPaths {
         let dirs = directories::ProjectDirs::from("dev", "ClipDeck", "clipdeck")
             .expect("could not resolve a home directory for the current user");
         Self {
-            config_dir: dirs.config_dir().to_path_buf(),
-            data_dir: dirs.data_dir().to_path_buf(),
-            cache_dir: dirs.cache_dir().to_path_buf(),
+            config_dir: std::env::var("CLIPDECK_CONFIG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| dirs.config_dir().to_path_buf()),
+            data_dir: std::env::var("CLIPDECK_DATA_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| dirs.data_dir().to_path_buf()),
+            cache_dir: std::env::var("CLIPDECK_CACHE_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| dirs.cache_dir().to_path_buf()),
         }
     }
 }
@@ -142,6 +153,21 @@ mod tests {
         let entries: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
         let settings = AppSettings::from_entries(&entries);
         assert_eq!(settings.hotkey_binding, AppSettings::default().hotkey_binding);
+    }
+
+    #[test]
+    fn individual_directory_env_vars_override_the_resolved_defaults() {
+        std::env::set_var("CLIPDECK_CONFIG_DIR", "/tmp/clipdeck-config-override");
+        std::env::set_var("CLIPDECK_DATA_DIR", "/tmp/clipdeck-data-override");
+        std::env::set_var("CLIPDECK_CACHE_DIR", "/tmp/clipdeck-cache-override");
+        let paths = AppPaths::resolve();
+        std::env::remove_var("CLIPDECK_CONFIG_DIR");
+        std::env::remove_var("CLIPDECK_DATA_DIR");
+        std::env::remove_var("CLIPDECK_CACHE_DIR");
+
+        assert_eq!(paths.config_dir, PathBuf::from("/tmp/clipdeck-config-override"));
+        assert_eq!(paths.data_dir, PathBuf::from("/tmp/clipdeck-data-override"));
+        assert_eq!(paths.cache_dir, PathBuf::from("/tmp/clipdeck-cache-override"));
     }
 
     #[test]
