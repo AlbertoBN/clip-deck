@@ -36,15 +36,7 @@ mod tests {
     #[test]
     fn fresh_database_gets_the_full_schema() {
         let conn = open(":memory:").unwrap();
-        for table in [
-            "clips",
-            "clip_representations",
-            "groups",
-            "app_rules",
-            "settings",
-            "events",
-            "clips_fts",
-        ] {
+        for table in ["clips", "clip_representations", "app_rules", "settings", "events", "clips_fts"] {
             assert!(table_exists(&conn, table), "expected {table} to exist");
         }
     }
@@ -69,8 +61,7 @@ mod tests {
     fn new_connection_enforces_foreign_keys() {
         let conn = open(":memory:").unwrap();
         let result = conn.execute(
-            "INSERT INTO clips (id, created_at, updated_at, primary_mime, content_hash, group_id) \
-             VALUES ('c1', 'now', 'now', 'text/plain', 'hash1', 'nonexistent-group')",
+            "INSERT INTO clip_representations (clip_id, mime_type) VALUES ('nonexistent-clip', 'text/plain')",
             [],
         );
         assert!(result.is_err());

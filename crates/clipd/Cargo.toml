@@ -9,6 +9,10 @@ publish.workspace = true
 name = "clipd"
 path = "src/main.rs"
 
+[[bin]]
+name = "clip-hotkey-trigger"
+path = "src/bin/clip_hotkey_trigger.rs"
+
 [dependencies]
 clip-core.workspace = true
 clip-store.workspace = true

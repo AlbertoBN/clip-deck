@@ -17,7 +17,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 import { useClipStore } from '../../state/store'
-import type { Clip, Group } from '../../state/types'
+import type { Clip } from '../../state/types'
 import { Manager } from './Manager'
 
 function clip(id: string, overrides: Partial<Clip> = {}): Clip {
@@ -35,7 +35,6 @@ function clip(id: string, overrides: Partial<Clip> = {}): Clip {
     is_favorite: false,
     is_pinned: false,
     is_deleted: false,
-    group_id: null,
     paste_mode_default: 'auto',
     metadata: null,
     representations: [],
@@ -43,38 +42,29 @@ function clip(id: string, overrides: Partial<Clip> = {}): Clip {
   }
 }
 
-function group(id: string, name: string): Group {
-  return { id, name, parent_group_id: null, sort_order: 0 }
-}
-
 beforeEach(() => {
   useClipStore.setState({ clips: [], connectionState: 'connected' })
   eventHandler = undefined
   vi.mocked(invoke).mockReset()
   vi.mocked(invoke).mockImplementation(async (command: string) => {
-    if (command === 'list_groups') return [group('work', 'Work')]
     if (command === 'search_clips') return []
     return undefined
   })
 })
 
 describe('Manager', () => {
-  it('re-queries with the selected group filter', async () => {
+  it('clicking Settings calls show_settings_window', async () => {
     const user = userEvent.setup()
     render(<Manager />)
-    await waitFor(() => expect(screen.getByLabelText(/group/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: /settings/i })).toBeInTheDocument())
 
-    vi.mocked(invoke).mockClear()
-    await user.selectOptions(screen.getByLabelText(/group/i), 'work')
+    await user.click(screen.getByRole('button', { name: /settings/i }))
 
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith('search_clips', expect.objectContaining({ filters: expect.objectContaining({ group_id: 'work' }) })),
-    )
+    expect(invoke).toHaveBeenCalledWith('show_settings_window', undefined)
   })
 
   it('issues PinClip when the pin action is triggered', async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
-      if (command === 'list_groups') return []
       if (command === 'search_clips') return [clip('c1')]
       return undefined
     })
@@ -89,7 +79,6 @@ describe('Manager', () => {
 
   it('removes a clip from the list once its ClipDeleted event is received', async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
-      if (command === 'list_groups') return []
       if (command === 'search_clips') return [clip('c1')]
       return undefined
     })
@@ -105,7 +94,6 @@ describe('Manager', () => {
     const pinned = clip('pinned', { is_pinned: true })
     const unpinned = clip('unpinned')
     vi.mocked(invoke).mockImplementation(async (command: string) => {
-      if (command === 'list_groups') return []
       if (command === 'search_clips') return [pinned, unpinned]
       if (command === 'clear_history') return undefined
       return undefined
@@ -125,7 +113,6 @@ describe('Manager', () => {
 
   it('moves selection down on ArrowDown', async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
-      if (command === 'list_groups') return []
       if (command === 'search_clips') return [clip('c1'), clip('c2')]
       return undefined
     })
@@ -141,7 +128,6 @@ describe('Manager', () => {
 
   it('scrolls the newly selected clip into view on ArrowDown', async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
-      if (command === 'list_groups') return []
       if (command === 'search_clips') return [clip('c1'), clip('c2')]
       return undefined
     })
@@ -159,7 +145,6 @@ describe('Manager', () => {
 
   it('copies the selected clip to the clipboard on Enter', async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
-      if (command === 'list_groups') return []
       if (command === 'search_clips') return [clip('c1')]
       if (command === 'copy_clip') return undefined
       return undefined
@@ -203,7 +188,6 @@ describe('Manager', () => {
       ],
     })
     vi.mocked(invoke).mockImplementation(async (command: string) => {
-      if (command === 'list_groups') return []
       if (command === 'search_clips') return [imageClip]
       return undefined
     })
@@ -217,7 +201,6 @@ describe('Manager', () => {
   it('shows a newly captured clip live without a manual refresh', async () => {
     vi.mocked(invoke).mockImplementation(async (command: string, rawArgs?: unknown) => {
       const args = rawArgs as Record<string, unknown> | undefined
-      if (command === 'list_groups') return []
       if (command === 'search_clips') return []
       if (command === 'get_clip' && args?.id === 'new1') return clip('new1', { display_text: 'brand new' })
       return undefined

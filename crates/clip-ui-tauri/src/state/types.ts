@@ -26,17 +26,9 @@ export interface Clip {
   is_favorite: boolean
   is_pinned: boolean
   is_deleted: boolean
-  group_id: string | null
   paste_mode_default: PasteMode
   metadata: unknown
   representations: ClipRepresentation[]
-}
-
-export interface Group {
-  id: string
-  name: string
-  parent_group_id: string | null
-  sort_order: number
 }
 
 export type RuleAction = 'exclude' | 'ephemeral'
@@ -74,7 +66,6 @@ export type ClearScope = 'all' | 'excluding_pinned'
 export interface SearchFilters {
   mime_family?: 'text' | 'html' | 'image' | 'other' | null
   pinned_only?: boolean
-  group_id?: string | null
   favorite_only?: boolean
   source_app?: string | null
 }

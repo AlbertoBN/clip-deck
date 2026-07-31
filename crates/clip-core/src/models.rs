@@ -1,4 +1,4 @@
-//! Clip, ClipRepresentation, Group, Rule, AppContext, PasteMode.
+//! Clip, ClipRepresentation, Rule, AppContext, PasteMode.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,28 +24,6 @@ impl AppContext {
 
     pub fn with_window(app: impl Into<String>, window: impl Into<String>) -> Self {
         Self { app: app.into(), window: Some(window.into()) }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Group {
-    pub id: String,
-    pub name: String,
-    pub parent_group_id: Option<String>,
-    pub sort_order: i64,
-}
-
-impl Group {
-    pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        parent_group_id: Option<String>,
-    ) -> Result<Self, crate::errors::CoreError> {
-        let id = id.into();
-        if parent_group_id.as_deref() == Some(id.as_str()) {
-            return Err(crate::errors::CoreError::InvalidGroupParent(id));
-        }
-        Ok(Self { id, name: name.into(), parent_group_id, sort_order: 0 })
     }
 }
 
@@ -162,7 +140,6 @@ pub struct Clip {
     pub is_favorite: bool,
     pub is_pinned: bool,
     pub is_deleted: bool,
-    pub group_id: Option<String>,
     pub paste_mode_default: PasteMode,
     pub metadata: Option<serde_json::Value>,
     pub representations: Vec<ClipRepresentation>,
@@ -190,7 +167,6 @@ impl Clip {
             is_favorite: false,
             is_pinned: false,
             is_deleted: false,
-            group_id: None,
             paste_mode_default: PasteMode::default(),
             metadata: None,
             representations,
@@ -223,18 +199,6 @@ mod tests {
         let ctx = AppContext::new("gnome-terminal");
         assert_eq!(ctx.app, "gnome-terminal");
         assert!(ctx.window.is_none());
-    }
-
-    #[test]
-    fn group_can_reference_a_different_group_as_parent() {
-        let group = Group::new("child", "Child", Some("parent".to_string())).unwrap();
-        assert_eq!(group.parent_group_id, Some("parent".to_string()));
-    }
-
-    #[test]
-    fn group_cannot_be_its_own_parent() {
-        let result = Group::new("g1", "G1", Some("g1".to_string()));
-        assert!(result.is_err());
     }
 
     #[test]

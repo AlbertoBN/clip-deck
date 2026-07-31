@@ -51,7 +51,6 @@ pub fn parse_query(input: &str) -> ParsedQuery {
 pub struct SearchFilters {
     pub mime_family: Option<crate::mime::MimeFamily>,
     pub pinned_only: bool,
-    pub group_id: Option<String>,
     pub favorite_only: bool,
     pub source_app: Option<String>,
 }
@@ -63,10 +62,9 @@ mod tests {
     #[test]
     fn search_filters_deserializes_with_missing_fields_defaulted() {
         // The TS `SearchFilters` interface marks every field optional and
-        // callers routinely send a partial object (e.g. just `group_id` and
-        // `pinned_only`); this must deserialize instead of erroring on
-        // absent fields.
-        let json = r#"{"group_id": null, "pinned_only": true}"#;
+        // callers routinely send a partial object (e.g. just `pinned_only`);
+        // this must deserialize instead of erroring on absent fields.
+        let json = r#"{"pinned_only": true}"#;
         let filters: SearchFilters = serde_json::from_str(json).unwrap();
         assert_eq!(filters, SearchFilters { pinned_only: true, ..SearchFilters::default() });
     }

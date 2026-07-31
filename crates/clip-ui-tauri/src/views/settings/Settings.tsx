@@ -63,6 +63,10 @@ export function Settings() {
     setRules((existing) => existing.filter((rule) => rule.id !== id))
   }
 
+  const handleClose = async () => {
+    await callCommand('close_settings_window')
+  }
+
   return (
     <div className="settings">
       <section>
@@ -100,6 +104,7 @@ export function Settings() {
             value={newRuleAppMatch}
             onChange={(event) => setNewRuleAppMatch(event.target.value)}
           />
+          <span className="hint">e.g. 1Password</span>
         </label>
         <button type="button" onClick={handleCreateRule}>
           Add rule
@@ -118,6 +123,12 @@ export function Settings() {
           ))}
         </ul>
       </section>
+
+      <div className="settings-footer">
+        <button type="button" onClick={handleClose}>
+          Close
+        </button>
+      </div>
     </div>
   )
 }

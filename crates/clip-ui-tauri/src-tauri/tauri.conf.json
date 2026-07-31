@@ -22,13 +22,13 @@
       {
         "label": "popup",
         "title": "ClipDeck",
-        "width": 600,
-        "height": 400,
+        "width": 800,
+        "height": 600,
         "visible": false,
         "decorations": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "resizable": false
+        "resizable": true
       },
       {
         "label": "settings",
@@ -36,7 +36,8 @@
         "width": 500,
         "height": 600,
         "visible": false,
-        "resizable": true
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {
@@ -62,6 +63,11 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    },
+    "linux": {
+      "deb": {
+        "desktopTemplate": "./template.desktop"
+      }
     }
   }
 }

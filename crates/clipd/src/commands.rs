@@ -45,10 +45,6 @@ impl CommandHandler {
                 let clip = self.store.get_clip(&id).map_err(|e| e.to_string())?;
                 Ok(serde_json::to_value(clip).expect("clip always serializes"))
             }
-            Command::ListGroups => {
-                let groups = self.store.list_groups().map_err(|e| e.to_string())?;
-                Ok(serde_json::to_value(groups).expect("groups always serialize"))
-            }
             Command::ListRules => {
                 let rules = self.store.list_rules().map_err(|e| e.to_string())?;
                 Ok(serde_json::to_value(rules).expect("rules always serialize"))
@@ -75,11 +71,6 @@ impl CommandHandler {
             }
             Command::PinClip { id, pinned } => {
                 self.store.set_pinned(&id, pinned).map_err(|e| e.to_string())?;
-                self.events.publish(Event::ClipUpdated { clip_id: id });
-                Ok(serde_json::json!({"ok": true}))
-            }
-            Command::AssignGroup { id, group_id } => {
-                self.store.set_group(&id, group_id.as_deref()).map_err(|e| e.to_string())?;
                 self.events.publish(Event::ClipUpdated { clip_id: id });
                 Ok(serde_json::json!({"ok": true}))
             }
@@ -113,6 +104,10 @@ impl CommandHandler {
                 self.events.publish(Event::CapturePaused { paused });
                 Ok(serde_json::json!({"ok": true}))
             }
+            Command::TriggerHotkey => {
+                self.events.publish(Event::HotkeyPressed);
+                Ok(serde_json::json!({"ok": true}))
+            }
         }
     }
 }
@@ -123,9 +118,18 @@ mod tests {
     use crate::app::Store;
     use crate::commands::CommandHandler;
     use crate::watch_loop::WatchLoop;
-    use clip_core::models::{Clip, Group, PasteMode, Rule, RuleAction};
+    use clip_core::models::{Clip, PasteMode, Rule, RuleAction};
     use clip_ipc::protocol::{ClearScope, Command, Event};
     use std::sync::Arc;
+
+    #[test]
+    fn trigger_hotkey_publishes_hotkey_pressed() {
+        let (handler, _, _, events) = handler();
+
+        handler.handle(Command::TriggerHotkey).unwrap();
+
+        assert_eq!(events.events(), vec![Event::HotkeyPressed]);
+    }
 
     fn handler() -> (CommandHandler, Arc<FakeStore>, Arc<FakeBackend>, Arc<FakeEventPublisher>) {
         let store = Arc::new(FakeStore::new());
@@ -239,17 +243,6 @@ mod tests {
 
         assert!(store.get_clip("c1").unwrap().unwrap().is_deleted);
         assert_eq!(events.events(), vec![Event::ClipDeleted { clip_id: "c1".to_string() }]);
-    }
-
-    #[test]
-    fn assign_group_publishes_clip_updated() {
-        let (handler, store, _backend, events) = handler();
-        store.insert_clip(&clip_with_text("c1", "hello")).unwrap();
-
-        handler.handle(Command::AssignGroup { id: "c1".to_string(), group_id: Some("g1".to_string()) }).unwrap();
-
-        assert_eq!(store.get_clip("c1").unwrap().unwrap().group_id, Some("g1".to_string()));
-        assert_eq!(events.events(), vec![Event::ClipUpdated { clip_id: "c1".to_string() }]);
     }
 
     #[test]
@@ -378,18 +371,6 @@ mod tests {
         assert_eq!(response["backend"], serde_json::json!("x11"));
         assert_eq!(response["capabilities"]["paste_simulation"], serde_json::json!(true));
         assert_eq!(response["capabilities"]["hotkeys"], serde_json::json!(false));
-    }
-
-    #[test]
-    fn list_groups_returns_seeded_groups() {
-        let (handler, store, _backend, _events) = handler();
-        store.seed_group(Group::new("g1", "Work", None).unwrap());
-
-        let response = handler.handle(Command::ListGroups).unwrap();
-
-        let groups: Vec<Group> = serde_json::from_value(response).unwrap();
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].id, "g1");
     }
 
     #[test]

@@ -27,7 +27,6 @@ function clip(id: string, overrides: Partial<Clip> = {}): Clip {
     is_favorite: false,
     is_pinned: false,
     is_deleted: false,
-    group_id: null,
     paste_mode_default: 'auto',
     metadata: null,
     representations: [],

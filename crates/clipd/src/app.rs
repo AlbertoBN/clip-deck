@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use crate::commands::CommandHandler;
 use crate::watch_loop::WatchLoop;
 use clip_core::config::{AppSettings, SettingsKey};
-use clip_core::models::{AppContext, Clip, ClipRepresentation, Group, PasteMode, Rule};
+use clip_core::models::{AppContext, Clip, ClipRepresentation, PasteMode, Rule};
 use clip_core::search::SearchFilters;
 use clip_platform::clipboard::{BackendCapabilities, ClipboardSnapshot, PlatformError};
 use clip_store::retention::ClearScope;
@@ -20,10 +20,8 @@ pub trait Store: Send + Sync {
     fn touch_last_used(&self, id: &str) -> Result<(), StoreError>;
     fn search(&self, query: &str, filters: &SearchFilters) -> Result<Vec<Clip>, StoreError>;
     fn set_pinned(&self, id: &str, pinned: bool) -> Result<(), StoreError>;
-    fn set_group(&self, id: &str, group_id: Option<&str>) -> Result<(), StoreError>;
     fn delete_clip(&self, id: &str) -> Result<(), StoreError>;
     fn clear_history(&self, scope: ClearScope) -> Result<Vec<String>, StoreError>;
-    fn list_groups(&self) -> Result<Vec<Group>, StoreError>;
     fn list_enabled_rules(&self) -> Result<Vec<Rule>, StoreError>;
     fn list_rules(&self) -> Result<Vec<Rule>, StoreError>;
     fn save_rule(&self, rule: &Rule) -> Result<(), StoreError>;
@@ -106,20 +104,12 @@ impl Store for SqliteStore {
         clip_store::clips::set_pinned(&self.conn.lock().unwrap(), id, pinned)
     }
 
-    fn set_group(&self, id: &str, group_id: Option<&str>) -> Result<(), StoreError> {
-        clip_store::clips::set_group(&self.conn.lock().unwrap(), id, group_id)
-    }
-
     fn delete_clip(&self, id: &str) -> Result<(), StoreError> {
         clip_store::retention::delete_clip(&self.conn.lock().unwrap(), id)
     }
 
     fn clear_history(&self, scope: ClearScope) -> Result<Vec<String>, StoreError> {
         clip_store::retention::clear_with_ids(&self.conn.lock().unwrap(), scope)
-    }
-
-    fn list_groups(&self) -> Result<Vec<Group>, StoreError> {
-        clip_store::groups::list_all(&self.conn.lock().unwrap())
     }
 
     fn list_enabled_rules(&self) -> Result<Vec<Rule>, StoreError> {
@@ -382,7 +372,6 @@ pub(crate) mod fakes {
     #[derive(Default)]
     pub(crate) struct FakeStore {
         clips: Mutex<HashMap<String, Clip>>,
-        groups: Mutex<HashMap<String, Group>>,
         rules: Mutex<HashMap<String, Rule>>,
         settings: Mutex<AppSettings>,
         prune_calls: Mutex<usize>,
@@ -392,10 +381,6 @@ pub(crate) mod fakes {
     impl FakeStore {
         pub(crate) fn new() -> Self {
             Self::default()
-        }
-
-        pub(crate) fn seed_group(&self, group: Group) {
-            self.groups.lock().unwrap().insert(group.id.clone(), group);
         }
 
         pub(crate) fn prune_call_count(&self) -> usize {
@@ -447,7 +432,6 @@ pub(crate) mod fakes {
                 .filter(|c| query.is_empty() || c.display_text.as_deref().unwrap_or("").contains(query))
                 .filter(|c| !filters.pinned_only || c.is_pinned)
                 .filter(|c| !filters.favorite_only || c.is_favorite)
-                .filter(|c| filters.group_id.is_none() || c.group_id == filters.group_id)
                 .filter(|c| filters.source_app.is_none() || c.source_app == filters.source_app)
                 .cloned()
                 .collect();
@@ -458,13 +442,6 @@ pub(crate) mod fakes {
         fn set_pinned(&self, id: &str, pinned: bool) -> Result<(), StoreError> {
             if let Some(clip) = self.clips.lock().unwrap().get_mut(id) {
                 clip.is_pinned = pinned;
-            }
-            Ok(())
-        }
-
-        fn set_group(&self, id: &str, group_id: Option<&str>) -> Result<(), StoreError> {
-            if let Some(clip) = self.clips.lock().unwrap().get_mut(id) {
-                clip.group_id = group_id.map(String::from);
             }
             Ok(())
         }
@@ -488,10 +465,6 @@ pub(crate) mod fakes {
                 clips.get_mut(id).unwrap().is_deleted = true;
             }
             Ok(ids)
-        }
-
-        fn list_groups(&self) -> Result<Vec<Group>, StoreError> {
-            Ok(self.groups.lock().unwrap().values().cloned().collect())
         }
 
         fn list_enabled_rules(&self) -> Result<Vec<Rule>, StoreError> {

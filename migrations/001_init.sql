@@ -1,14 +1,6 @@
--- Initial schema: clips, clip_representations, clips_fts, groups, app_rules,
+-- Initial schema: clips, clip_representations, clips_fts, app_rules,
 -- settings, events. See the "Proposed SQLite migration file" section of
 -- docs/ClipDeck-ubuntu-clipboard-manager-prd.md for the full DDL.
-
-CREATE TABLE IF NOT EXISTS groups (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    parent_group_id TEXT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-);
 
 CREATE TABLE IF NOT EXISTS clips (
     id TEXT PRIMARY KEY,
@@ -24,7 +16,6 @@ CREATE TABLE IF NOT EXISTS clips (
     is_favorite INTEGER NOT NULL DEFAULT 0,
     is_pinned INTEGER NOT NULL DEFAULT 0,
     is_deleted INTEGER NOT NULL DEFAULT 0,
-    group_id TEXT NULL REFERENCES groups(id) ON DELETE SET NULL,
     paste_mode_default TEXT NOT NULL DEFAULT 'auto',
     metadata_json TEXT NULL
 );
@@ -37,9 +28,6 @@ ON clips(created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_clips_last_used_at
 ON clips(last_used_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_clips_group_id
-ON clips(group_id);
 
 CREATE INDEX IF NOT EXISTS idx_clips_pinned
 ON clips(is_pinned, created_at DESC);

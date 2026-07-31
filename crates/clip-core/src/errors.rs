@@ -4,8 +4,6 @@
 pub enum CoreError {
     #[error("invalid MIME type: {0}")]
     InvalidMime(String),
-    #[error("group cannot be its own parent: {0}")]
-    InvalidGroupParent(String),
     #[error("invalid rule: {0}")]
     InvalidRule(String),
 }
@@ -17,12 +15,6 @@ mod tests {
     #[test]
     fn invalid_mime_has_non_empty_display() {
         let err = CoreError::InvalidMime("not-a-mime".into());
-        assert!(!err.to_string().is_empty());
-    }
-
-    #[test]
-    fn invalid_group_parent_has_non_empty_display() {
-        let err = CoreError::InvalidGroupParent("g1".into());
         assert!(!err.to_string().is_empty());
     }
 

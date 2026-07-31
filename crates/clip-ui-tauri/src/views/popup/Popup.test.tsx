@@ -1,10 +1,11 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
+  convertFileSrc: vi.fn((path: string) => `asset://${path}`),
 }))
 
 let eventHandler: ((event: { payload: unknown }) => void) | undefined
@@ -16,8 +17,9 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 const hide = vi.fn().mockResolvedValue(undefined)
+const startResizeDragging = vi.fn().mockResolvedValue(undefined)
 vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({ hide }),
+  getCurrentWindow: () => ({ hide, startResizeDragging }),
 }))
 
 import { useClipStore } from '../../state/store'
@@ -39,7 +41,6 @@ function clip(id: string, overrides: Partial<Clip> = {}): Clip {
     is_favorite: false,
     is_pinned: false,
     is_deleted: false,
-    group_id: null,
     paste_mode_default: 'auto',
     metadata: null,
     representations: [],
@@ -51,10 +52,45 @@ beforeEach(() => {
   useClipStore.setState({ clips: [], connectionState: 'connected' })
   vi.mocked(invoke).mockReset()
   hide.mockClear()
+  startResizeDragging.mockClear()
   eventHandler = undefined
 })
 
 describe('Popup', () => {
+  it('renders a drag gripper with a vertical ClipDeck label', async () => {
+    vi.mocked(invoke).mockResolvedValue([])
+
+    render(<Popup />)
+
+    const label = screen.getByText('ClipDeck')
+    expect(label.closest('[data-tauri-drag-region]')).not.toBeNull()
+  })
+
+  it('closes the popup when the gripper close button is clicked', async () => {
+    vi.mocked(invoke).mockResolvedValue([])
+    const user = userEvent.setup()
+
+    render(<Popup />)
+
+    await user.click(screen.getByRole('button', { name: /close/i }))
+
+    await waitFor(() => expect(hide).toHaveBeenCalled())
+  })
+
+  it('starts a native resize drag when an edge handle is pressed', async () => {
+    vi.mocked(invoke).mockResolvedValue([])
+
+    render(<Popup />)
+
+    fireEvent.mouseDown(screen.getByTestId('resize-handle-south'))
+    fireEvent.mouseDown(screen.getByTestId('resize-handle-east'))
+    fireEvent.mouseDown(screen.getByTestId('resize-handle-northwest'))
+
+    expect(startResizeDragging).toHaveBeenCalledWith('South')
+    expect(startResizeDragging).toHaveBeenCalledWith('East')
+    expect(startResizeDragging).toHaveBeenCalledWith('NorthWest')
+  })
+
   it('focuses the search input on open', async () => {
     vi.mocked(invoke).mockResolvedValue([])
 
@@ -119,6 +155,35 @@ describe('Popup', () => {
     expect(invoke).toHaveBeenCalledWith('paste_clip', { id: 'c1', mode: 'auto' })
   })
 
+  it('closes the popup on Escape without pasting', async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'search_clips') return [clip('c1')]
+      return undefined
+    })
+    const user = userEvent.setup()
+
+    render(<Popup />)
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1))
+
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => expect(hide).toHaveBeenCalled())
+    expect(invoke).not.toHaveBeenCalledWith('paste_clip', expect.anything())
+  })
+
+  it('closes the popup on Escape even when focus has left the search input', async () => {
+    vi.mocked(invoke).mockResolvedValue([])
+    const user = userEvent.setup()
+
+    render(<Popup />)
+    await waitFor(() => expect(screen.getByLabelText(/search/i)).toHaveFocus())
+    screen.getByLabelText(/search/i).blur()
+
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => expect(hide).toHaveBeenCalled())
+  })
+
   it('re-focuses the search field and re-searches on a repeat HotkeyPressed event', async () => {
     vi.mocked(invoke).mockResolvedValue([])
 
@@ -135,6 +200,43 @@ describe('Popup', () => {
 
     await waitFor(() => expect(screen.getByLabelText(/search/i)).toHaveFocus())
     expect(invoke).toHaveBeenCalledWith('search_clips', expect.objectContaining({ query: '' }))
+  })
+
+  it('shows a thumbnail for an image clip instead of a blank row', async () => {
+    const imageClip = clip('img1', {
+      display_text: null,
+      primary_mime: 'image/png',
+      representations: [
+        {
+          mime_type: 'image/png',
+          text_value: null,
+          blob_path: '/blobs/full.png',
+          preview_text: null,
+          width: 800,
+          height: 600,
+          byte_size: 12345,
+          ordinal: 0,
+          is_preview: false,
+        },
+        {
+          mime_type: 'image/png',
+          text_value: null,
+          blob_path: '/blobs/thumb.png',
+          preview_text: null,
+          width: 200,
+          height: 150,
+          byte_size: 456,
+          ordinal: 1,
+          is_preview: true,
+        },
+      ],
+    })
+    vi.mocked(invoke).mockResolvedValue([imageClip])
+
+    render(<Popup />)
+
+    const img = await screen.findByRole('img')
+    expect(img).toHaveAttribute('src', 'asset:///blobs/thumb.png')
   })
 
   it('issues a debounced SearchClips with the typed query', async () => {
