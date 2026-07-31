@@ -202,6 +202,23 @@ describe('Popup', () => {
     expect(invoke).toHaveBeenCalledWith('search_clips', expect.objectContaining({ query: '' }))
   })
 
+  it('adds a newly captured clip live, without waiting for the next HotkeyPressed', async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'search_clips') return [clip('c1')]
+      if (command === 'get_clip') return clip('new1')
+      return undefined
+    })
+
+    render(<Popup />)
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1))
+
+    await act(async () => {
+      await eventHandler?.({ payload: { type: 'ClipCaptured', clip_id: 'new1' } })
+    })
+
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2))
+  })
+
   it('shows a thumbnail for an image clip instead of a blank row', async () => {
     const imageClip = clip('img1', {
       display_text: null,

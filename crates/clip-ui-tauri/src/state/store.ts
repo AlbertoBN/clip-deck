@@ -10,7 +10,7 @@ interface ClipStoreState {
   clips: Clip[]
   connectionState: ConnectionState
   searchClips: (query: string, filters?: SearchFilters) => Promise<void>
-  subscribeToEvents: () => Promise<() => void>
+  subscribeToEvents: (onEvent?: (event: DaemonEvent) => void) => Promise<() => void>
 }
 
 function isDaemonNotRunning(error: unknown): boolean {
@@ -34,7 +34,7 @@ export const useClipStore = create<ClipStoreState>((set) => ({
     }
   },
 
-  subscribeToEvents: () =>
+  subscribeToEvents: (onEvent) =>
     listen<DaemonEvent>(DAEMON_EVENT_CHANNEL, async (event) => {
       const daemonEvent = event.payload
       switch (daemonEvent.type) {
@@ -55,5 +55,6 @@ export const useClipStore = create<ClipStoreState>((set) => ({
         default:
           break
       }
+      onEvent?.(daemonEvent)
     }),
 }))

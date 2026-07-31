@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listen } from '@tauri-apps/api/event'
 import { callCommand } from '../../state/client'
 import { findThumbnail } from '../../state/clips'
 import { useClipStore } from '../../state/store'
-import { DAEMON_EVENT_CHANNEL, type DaemonEvent } from '../../state/types'
 
 const SEARCH_DEBOUNCE_MS = 200
 
@@ -32,6 +30,7 @@ export function Popup() {
   const inputRef = useRef<HTMLInputElement>(null)
   const clips = useClipStore((s) => s.clips)
   const searchClips = useClipStore((s) => s.searchClips)
+  const subscribeToEvents = useClipStore((s) => s.subscribeToEvents)
 
   const activate = () => {
     inputRef.current?.focus()
@@ -47,17 +46,21 @@ export function Popup() {
     // The window is shown/hidden rather than created/destroyed on each
     // hotkey press, so the mount effect above only covers the very first
     // activation - repeat presses re-run the same focus-and-empty-search
-    // behavior via this listener instead.
-    const unlisten = listen<DaemonEvent>(DAEMON_EVENT_CHANNEL, (event) => {
-      if (event.payload.type === 'HotkeyPressed') {
+    // behavior via this subscription instead. Routing through the store's
+    // subscribeToEvents (rather than a separate `listen` call) also keeps
+    // the popup's clip list live for ClipCaptured/ClipUpdated/ClipDeleted
+    // while it's open, not just on the next hotkey press.
+    let unlisten: (() => void) | undefined
+    void subscribeToEvents((event) => {
+      if (event.type === 'HotkeyPressed') {
         activate()
       }
+    }).then((fn) => {
+      unlisten = fn
     })
-    return () => {
-      void unlisten.then((f) => f())
-    }
+    return () => unlisten?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [subscribeToEvents])
 
   useEffect(() => {
     const handle = setTimeout(() => {
