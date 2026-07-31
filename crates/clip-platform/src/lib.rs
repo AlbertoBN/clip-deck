@@ -1,6 +1,7 @@
 pub mod clipboard;
 pub mod diagnostics;
 pub mod focus;
+pub mod gsettings_hotkey;
 pub mod hotkeys;
 pub mod paste;
 pub mod tray_support;

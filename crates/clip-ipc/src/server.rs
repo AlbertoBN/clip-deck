@@ -300,7 +300,7 @@ mod tests {
         tokio::spawn(server.run());
 
         let mut client = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
-        send_request(&mut client, &crate::protocol::Request::new("r1", Command::ListGroups)).await;
+        send_request(&mut client, &crate::protocol::Request::new("r1", Command::ListRules)).await;
         send_request(&mut client, &crate::protocol::Request::new("r2", Command::GetSettings)).await;
 
         let (read, _write) = client.into_split();

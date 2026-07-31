@@ -22,6 +22,8 @@ pub enum HotkeyError {
     AlreadyRegistered(HotkeyBinding),
     #[error("hotkey registration is not supported on this compositor")]
     Unsupported,
+    #[error("gsettings command failed: {0}")]
+    GSettingsFailure(String),
 }
 
 /// Parses a binding string like `"Ctrl+Shift+V"` into modifiers + key.

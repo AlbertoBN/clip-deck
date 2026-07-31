@@ -38,8 +38,8 @@ fn is_unique_violation(err: &rusqlite::Error) -> bool {
 }
 
 pub(crate) fn row_to_clip(row: &Row) -> rusqlite::Result<Clip> {
-    let paste_mode_str: String = row.get(14)?;
-    let metadata_str: Option<String> = row.get(15)?;
+    let paste_mode_str: String = row.get(13)?;
+    let metadata_str: Option<String> = row.get(14)?;
     Ok(Clip {
         id: row.get(0)?,
         created_at: from_rfc3339(&row.get::<_, String>(1)?),
@@ -54,7 +54,6 @@ pub(crate) fn row_to_clip(row: &Row) -> rusqlite::Result<Clip> {
         is_favorite: row.get::<_, i64>(10)? != 0,
         is_pinned: row.get::<_, i64>(11)? != 0,
         is_deleted: row.get::<_, i64>(12)? != 0,
-        group_id: row.get(13)?,
         paste_mode_default: paste_mode_from_str(&paste_mode_str),
         metadata: metadata_from_string(metadata_str),
         representations: vec![],
@@ -63,7 +62,7 @@ pub(crate) fn row_to_clip(row: &Row) -> rusqlite::Result<Clip> {
 
 pub(crate) const CLIP_COLUMNS: &str = "id, created_at, updated_at, last_used_at, source_app, source_window, \
      primary_mime, display_text, content_hash, byte_size, is_favorite, is_pinned, is_deleted, \
-     group_id, paste_mode_default, metadata_json";
+     paste_mode_default, metadata_json";
 
 pub(crate) fn get_representations(conn: &Connection, clip_id: &str) -> Result<Vec<ClipRepresentation>, StoreError> {
     let mut stmt = conn.prepare(
@@ -93,7 +92,7 @@ pub(crate) fn get_representations(conn: &Connection, clip_id: &str) -> Result<Ve
 pub fn insert(conn: &Connection, clip: &Clip) -> Result<(), StoreError> {
     let tx = conn.unchecked_transaction()?;
     let result = tx.execute(
-        &format!("INSERT INTO clips ({CLIP_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)"),
+        &format!("INSERT INTO clips ({CLIP_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)"),
         params![
             clip.id,
             to_rfc3339(clip.created_at),
@@ -108,7 +107,6 @@ pub fn insert(conn: &Connection, clip: &Clip) -> Result<(), StoreError> {
             clip.is_favorite as i64,
             clip.is_pinned as i64,
             clip.is_deleted as i64,
-            clip.group_id,
             paste_mode_to_str(clip.paste_mode_default),
             metadata_to_string(&clip.metadata),
         ],
@@ -199,15 +197,6 @@ pub fn touch_last_used(conn: &Connection, id: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// Updates only a clip's group assignment (and `updated_at`).
-pub fn set_group(conn: &Connection, id: &str, group_id: Option<&str>) -> Result<(), StoreError> {
-    conn.execute(
-        "UPDATE clips SET group_id = ?1, updated_at = ?2 WHERE id = ?3",
-        params![group_id, to_rfc3339(time::OffsetDateTime::now_utc()), id],
-    )?;
-    Ok(())
-}
-
 /// Soft-deletes a clip by setting `is_deleted = 1`.
 pub fn soft_delete(conn: &Connection, id: &str) -> Result<(), StoreError> {
     conn.execute(
@@ -287,25 +276,6 @@ mod tests {
         let fetched = get(&conn, "c1").unwrap().unwrap();
         let last_used = fetched.last_used_at.expect("last_used_at should be set");
         assert!(time::OffsetDateTime::now_utc() - last_used < time::Duration::seconds(5));
-    }
-
-    #[test]
-    fn setting_a_clips_group_updates_only_the_group_id() {
-        let conn = crate::db::open(":memory:").unwrap();
-        insert_test_group(&conn, "g1");
-        insert(&conn, &new_clip("c1", "abc", "text/plain")).unwrap();
-        set_group(&conn, "c1", Some("g1")).unwrap();
-        let fetched = get(&conn, "c1").unwrap().unwrap();
-        assert_eq!(fetched.group_id, Some("g1".to_string()));
-        assert_eq!(fetched.content_hash, "abc");
-    }
-
-    fn insert_test_group(conn: &Connection, id: &str) {
-        conn.execute(
-            "INSERT INTO groups (id, name, created_at) VALUES (?1, 'Work', '2024-01-01T00:00:00Z')",
-            [id],
-        )
-        .unwrap();
     }
 
     #[test]

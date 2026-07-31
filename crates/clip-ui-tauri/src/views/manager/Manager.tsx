@@ -1,38 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { callCommand } from '../../state/client'
+import { findThumbnail } from '../../state/clips'
 import { useClipStore } from '../../state/store'
-import type { Clip, ClearScope, Group } from '../../state/types'
+import type { ClearScope } from '../../state/types'
 
 const INTERACTIVE_TAGS = new Set(['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'])
-
-// Prefers the generated thumbnail representation over the full image, so
-// list rows stay compact; falls back to the full image if no thumbnail was
-// captured (e.g. thumbnail generation failed but the full image persisted).
-function findThumbnail(clip: Clip) {
-  return (
-    clip.representations.find((r) => r.is_preview && r.mime_type.startsWith('image/')) ??
-    clip.representations.find((r) => r.mime_type.startsWith('image/'))
-  )
-}
 
 export function Manager() {
   const clips = useClipStore((s) => s.clips)
   const searchClips = useClipStore((s) => s.searchClips)
   const subscribeToEvents = useClipStore((s) => s.subscribeToEvents)
-  const [groups, setGroups] = useState<Group[]>([])
-  const [groupId, setGroupId] = useState<string | null>(null)
   const [pinnedOnly, setPinnedOnly] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const itemRefs = useRef<(HTMLLIElement | null)[]>([])
 
   useEffect(() => {
-    void callCommand<Group[]>('list_groups').then(setGroups)
-  }, [])
-
-  useEffect(() => {
-    void searchClips('', { group_id: groupId, pinned_only: pinnedOnly })
-  }, [groupId, pinnedOnly, searchClips])
+    void searchClips('', { pinned_only: pinnedOnly })
+  }, [pinnedOnly, searchClips])
 
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -52,9 +37,9 @@ export function Manager() {
 
   // Window-level rather than attached to a specific element: unlike the
   // hotkey popup's search input, nothing in the Manager view is focused by
-  // default. Interactive controls (the group filter, checkbox, buttons)
-  // still get their own native arrow-key/Enter behavior since events
-  // targeting them are skipped here.
+  // default. Interactive controls (the checkbox, buttons) still get their
+  // own native arrow-key/Enter behavior since events targeting them are
+  // skipped here.
   useEffect(() => {
     const handleKeyDown = async (event: KeyboardEvent) => {
       if (event.target instanceof HTMLElement && INTERACTIVE_TAGS.has(event.target.tagName)) return
@@ -85,10 +70,6 @@ export function Manager() {
     await callCommand('delete_clip', { id })
   }
 
-  const handleAssignGroup = async (id: string, newGroupId: string | null) => {
-    await callCommand('assign_group', { id, group_id: newGroupId })
-  }
-
   const handleBulkClear = async (scope: ClearScope) => {
     await callCommand('clear_history', { scope })
   }
@@ -96,21 +77,6 @@ export function Manager() {
   return (
     <div className="manager">
       <div className="filters">
-        <label>
-          Group
-          <select
-            aria-label="Group filter"
-            value={groupId ?? ''}
-            onChange={(event) => setGroupId(event.target.value || null)}
-          >
-            <option value="">All groups</option>
-            {groups.map((group) => (
-              <option key={group.id} value={group.id}>
-                {group.name}
-              </option>
-            ))}
-          </select>
-        </label>
         <label>
           <input type="checkbox" checked={pinnedOnly} onChange={(event) => setPinnedOnly(event.target.checked)} />
           Pinned only
@@ -120,6 +86,9 @@ export function Manager() {
         </button>
         <button type="button" onClick={() => handleBulkClear('all')}>
           Clear all history
+        </button>
+        <button type="button" onClick={() => callCommand('show_settings_window')}>
+          Settings
         </button>
       </div>
       <ul>
@@ -148,18 +117,6 @@ export function Manager() {
               <button type="button" aria-label={`Delete ${clip.id}`} onClick={() => handleDelete(clip.id)}>
                 Delete
               </button>
-              <select
-                aria-label={`Group for ${clip.id}`}
-                value={clip.group_id ?? ''}
-                onChange={(event) => handleAssignGroup(clip.id, event.target.value || null)}
-              >
-                <option value="">No group</option>
-                {groups.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name}
-                  </option>
-                ))}
-              </select>
             </span>
           </li>
         ))}

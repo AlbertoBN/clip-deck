@@ -108,7 +108,7 @@ mod tests {
             Box::pin(async move {
                 match command {
                     Command::GetSettings => Ok(serde_json::json!({"which": "settings"})),
-                    Command::ListGroups => Ok(serde_json::json!({"which": "groups"})),
+                    Command::ListRules => Ok(serde_json::json!({"which": "rules"})),
                     _ => Err("unsupported in test".to_string()),
                 }
             })
@@ -129,15 +129,15 @@ mod tests {
         let (socket_path, _dir, _publisher) = start_test_server().await;
         let client = IpcClient::connect(&socket_path).await.unwrap();
 
-        let (settings_resp, groups_resp) =
-            tokio::join!(client.call(Command::GetSettings), client.call(Command::ListGroups));
+        let (settings_resp, rules_resp) =
+            tokio::join!(client.call(Command::GetSettings), client.call(Command::ListRules));
 
         match settings_resp {
             Response::Ok { payload, .. } => assert_eq!(payload, serde_json::json!({"which": "settings"})),
             Response::Err { error, .. } => panic!("unexpected error: {error}"),
         }
-        match groups_resp {
-            Response::Ok { payload, .. } => assert_eq!(payload, serde_json::json!({"which": "groups"})),
+        match rules_resp {
+            Response::Ok { payload, .. } => assert_eq!(payload, serde_json::json!({"which": "rules"})),
             Response::Err { error, .. } => panic!("unexpected error: {error}"),
         }
     }

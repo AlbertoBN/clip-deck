@@ -123,6 +123,13 @@ describe('Settings', () => {
     await waitFor(() => expect(screen.getByText('Bitwarden')).toBeInTheDocument())
   })
 
+  it('shows an example app match next to the new rule input', async () => {
+    render(<Settings />)
+    await waitFor(() => expect(screen.getByLabelText(/new rule app match/i)).toBeInTheDocument())
+
+    expect(screen.getByText(/e\.g\.\s*1Password/i)).toBeInTheDocument()
+  })
+
   it('creating a rule issues SaveRule with the entered app match', async () => {
     const user = userEvent.setup()
     render(<Settings />)
@@ -151,5 +158,15 @@ describe('Settings', () => {
 
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('delete_rule', expect.objectContaining({ id: expect.any(String) })))
     expect(screen.queryByText('1Password')).not.toBeInTheDocument()
+  })
+
+  it('clicking Close calls close_settings_window', async () => {
+    const user = userEvent.setup()
+    render(<Settings />)
+    await waitFor(() => expect(screen.getByLabelText(/hotkey binding/i)).toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: /close/i }))
+
+    expect(invoke).toHaveBeenCalledWith('close_settings_window', undefined)
   })
 })

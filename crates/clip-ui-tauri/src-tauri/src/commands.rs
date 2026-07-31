@@ -1,7 +1,7 @@
 //! `#[tauri::command]` wrappers bridging the frontend to a managed `Client`.
 
 use clip_core::config::AppSettings;
-use clip_core::models::{Clip, Group, PasteMode, Rule};
+use clip_core::models::{Clip, PasteMode, Rule};
 use clip_core::search::SearchFilters;
 use clip_ipc::protocol::{ClearScope, Command, Response};
 
@@ -47,20 +47,12 @@ pub async fn pin_clip_with(client: &dyn Client, id: String, pinned: bool) -> Res
     response_ok(client.call(Command::PinClip { id, pinned }).await)
 }
 
-pub async fn assign_group_with(client: &dyn Client, id: String, group_id: Option<String>) -> Result<(), String> {
-    response_ok(client.call(Command::AssignGroup { id, group_id }).await)
-}
-
 pub async fn delete_clip_with(client: &dyn Client, id: String) -> Result<(), String> {
     response_ok(client.call(Command::DeleteClip { id }).await)
 }
 
 pub async fn clear_history_with(client: &dyn Client, scope: ClearScope) -> Result<(), String> {
     response_ok(client.call(Command::ClearHistory { scope }).await)
-}
-
-pub async fn list_groups_with(client: &dyn Client) -> Result<Vec<Group>, String> {
-    response_payload(client.call(Command::ListGroups).await)
 }
 
 pub async fn list_rules_with(client: &dyn Client) -> Result<Vec<Rule>, String> {
@@ -123,15 +115,6 @@ pub async fn pin_clip(state: tauri::State<'_, ClientHandle>, id: String, pinned:
 }
 
 #[tauri::command]
-pub async fn assign_group(
-    state: tauri::State<'_, ClientHandle>,
-    id: String,
-    group_id: Option<String>,
-) -> Result<(), String> {
-    assign_group_with(state.0.as_ref(), id, group_id).await
-}
-
-#[tauri::command]
 pub async fn delete_clip(state: tauri::State<'_, ClientHandle>, id: String) -> Result<(), String> {
     delete_clip_with(state.0.as_ref(), id).await
 }
@@ -139,11 +122,6 @@ pub async fn delete_clip(state: tauri::State<'_, ClientHandle>, id: String) -> R
 #[tauri::command]
 pub async fn clear_history(state: tauri::State<'_, ClientHandle>, scope: ClearScope) -> Result<(), String> {
     clear_history_with(state.0.as_ref(), scope).await
-}
-
-#[tauri::command]
-pub async fn list_groups(state: tauri::State<'_, ClientHandle>) -> Result<Vec<Group>, String> {
-    list_groups_with(state.0.as_ref()).await
 }
 
 #[tauri::command]

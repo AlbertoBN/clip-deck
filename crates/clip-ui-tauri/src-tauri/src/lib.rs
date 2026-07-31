@@ -18,6 +18,28 @@ use tray::TrayState;
 
 const DAEMON_EVENT_CHANNEL: &str = "daemon-event";
 
+/// Hides the settings window. The settings window has no native decorations
+/// (its close/minimize/maximize buttons were unreliable on this Linux/GTK
+/// setup), so the settings view's own in-app Close button calls this instead.
+#[tauri::command]
+fn close_settings_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        window.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Shows the settings window, invoked from the Manager UI's own Settings
+/// button rather than the tray menu.
+#[tauri::command]
+fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -36,7 +58,6 @@ pub fn run() {
                 .separator()
                 .item(&pause_item)
                 .text("clear_history", "Clear History")
-                .text("settings", "Settings")
                 .separator()
                 .text("quit", "Quit")
                 .build()?;
@@ -59,8 +80,16 @@ pub fn run() {
                 }
             }
 
+            // Loaded directly via `include_bytes!` (tracked by rustc as a
+            // real compile dependency) rather than `app.default_window_icon()`
+            // (backed by the `generate_context!()` macro's own icon
+            // embedding, which was observed to keep serving a stale icon
+            // across rebuilds even after a full `cargo clean`).
+            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
+
             TrayIconBuilder::new()
                 .menu(&menu)
+                .icon(tray_icon)
                 .on_menu_event(move |app_handle, event| {
                     let client = app_handle.state::<ClientHandle>().0.clone();
                     match event.id().as_ref() {
@@ -88,12 +117,6 @@ pub fn run() {
                         "hide" => {
                             if let Some(window) = app_handle.get_webview_window("main") {
                                 let _ = window.hide();
-                            }
-                        }
-                        "settings" => {
-                            if let Some(window) = app_handle.get_webview_window("settings") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
                             }
                         }
                         _ => {}
@@ -126,10 +149,8 @@ pub fn run() {
             commands::paste_clip,
             commands::copy_clip,
             commands::pin_clip,
-            commands::assign_group,
             commands::delete_clip,
             commands::clear_history,
-            commands::list_groups,
             commands::list_rules,
             commands::save_rule,
             commands::delete_rule,
@@ -138,6 +159,8 @@ pub fn run() {
             commands::get_diagnostics,
             commands::pause_capture,
             sanitize::sanitize_clip_html,
+            close_settings_window,
+            show_settings_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

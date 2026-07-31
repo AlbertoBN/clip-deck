@@ -21,10 +21,8 @@ pub enum Command {
     PasteClip { id: String, mode: PasteMode },
     CopyClip { id: String },
     PinClip { id: String, pinned: bool },
-    AssignGroup { id: String, group_id: Option<String> },
     DeleteClip { id: String },
     ClearHistory { scope: ClearScope },
-    ListGroups,
     ListRules,
     SaveRule { rule: Rule },
     DeleteRule { id: String },
@@ -32,6 +30,7 @@ pub enum Command {
     UpdateSettings { settings: AppSettings },
     GetDiagnostics,
     PauseCapture { paused: bool },
+    TriggerHotkey,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,10 +102,8 @@ mod tests {
             Command::PasteClip { id: "c1".to_string(), mode: PasteMode::Auto },
             Command::CopyClip { id: "c1".to_string() },
             Command::PinClip { id: "c1".to_string(), pinned: true },
-            Command::AssignGroup { id: "c1".to_string(), group_id: Some("g1".to_string()) },
             Command::DeleteClip { id: "c1".to_string() },
             Command::ClearHistory { scope: ClearScope::ExcludingPinned },
-            Command::ListGroups,
             Command::ListRules,
             Command::SaveRule { rule: Rule::new("r1", "1Password", None, None, RuleAction::Exclude) },
             Command::DeleteRule { id: "r1".to_string() },
@@ -114,6 +111,7 @@ mod tests {
             Command::UpdateSettings { settings: AppSettings::default() },
             Command::GetDiagnostics,
             Command::PauseCapture { paused: true },
+            Command::TriggerHotkey,
         ]
     }
 
@@ -148,10 +146,10 @@ mod tests {
 
     #[test]
     fn two_concurrent_requests_get_distinguishable_responses() {
-        let r1 = Request::new("r1", Command::ListGroups);
+        let r1 = Request::new("r1", Command::ListRules);
         let r2 = Request::new("r2", Command::GetSettings);
         assert_ne!(r1.request_id, r2.request_id);
-        assert_eq!(r1.command, Command::ListGroups);
+        assert_eq!(r1.command, Command::ListRules);
         assert_eq!(r2.command, Command::GetSettings);
     }
 

@@ -27,11 +27,6 @@ fn matches_filters(clip: &Clip, filters: &SearchFilters) -> bool {
     if filters.favorite_only && !clip.is_favorite {
         return false;
     }
-    if let Some(group_id) = &filters.group_id {
-        if clip.group_id.as_deref() != Some(group_id.as_str()) {
-            return false;
-        }
-    }
     if let Some(source_app) = &filters.source_app {
         if clip.source_app.as_deref() != Some(source_app.as_str()) {
             return false;
@@ -148,24 +143,6 @@ mod tests {
         crate::clips::insert(&conn, &later).unwrap();
         let results = search(&conn, "", &SearchFilters::default()).unwrap();
         assert_eq!(results[0].id, "later");
-    }
-
-    #[test]
-    fn filtering_by_group_excludes_clips_outside_that_group() {
-        let conn = crate::db::open(":memory:").unwrap();
-        conn.execute(
-            "INSERT INTO groups (id, name, created_at) VALUES ('g1', 'Work', '2024-01-01T00:00:00Z')",
-            [],
-        )
-        .unwrap();
-        let mut in_group = clip_with_text("c1", "h1", "one");
-        in_group.group_id = Some("g1".to_string());
-        crate::clips::insert(&conn, &in_group).unwrap();
-        crate::clips::insert(&conn, &clip_with_text("c2", "h2", "two")).unwrap();
-        let filters = SearchFilters { group_id: Some("g1".to_string()), ..Default::default() };
-        let results = search(&conn, "", &filters).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].id, "c1");
     }
 
     #[test]
