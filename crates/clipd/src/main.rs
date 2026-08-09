@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
     let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
     let is_wayland_session = app::is_wayland_session(wayland_display.as_deref());
 
-    let (backend, backend_name): (std::sync::Arc<dyn app::Backend>, &str) = match app::X11DaemonBackend::connect() {
+    let (backend, backend_name): (std::sync::Arc<dyn app::Backend>, &str) = match app::X11DaemonBackend::connect(is_wayland_session) {
         Ok(x11_backend) => (std::sync::Arc::new(x11_backend), "x11"),
         Err(_) if is_wayland_session => (std::sync::Arc::new(app::WaylandDaemonBackend::connect()?), "wayland"),
         Err(x11_error) => return Err(x11_error),

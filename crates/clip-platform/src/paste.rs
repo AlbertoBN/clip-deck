@@ -39,11 +39,12 @@ pub fn resolve_paste_text(representations: &[ClipRepresentation], mode: PasteMod
 pub struct PasteSimulator<C: X11Connection> {
     conn: C,
     focus_detection_supported: bool,
+    key_synthesis_supported: bool,
 }
 
 impl<C: X11Connection> PasteSimulator<C> {
     pub fn new(conn: C) -> Self {
-        Self { conn, focus_detection_supported: true }
+        Self { conn, focus_detection_supported: true, key_synthesis_supported: true }
     }
 
     /// Like `new`, but for a backend that reports focus-detection as
@@ -52,7 +53,21 @@ impl<C: X11Connection> PasteSimulator<C> {
     /// treated as an error, since there was never any possibility of
     /// capturing one - see `paste-simulation`'s modified spec.
     pub fn without_focus_detection(conn: C) -> Self {
-        Self { conn, focus_detection_supported: false }
+        Self { conn, focus_detection_supported: false, key_synthesis_supported: true }
+    }
+
+    /// Like `new`, but for a session where the synthetic keystroke itself
+    /// (`XTestFakeInput`) is gated behind a compositor permission prompt -
+    /// notably GNOME/Mutter, which treats XTest key injection from an
+    /// XWayland client as a security-sensitive Remote Desktop portal
+    /// operation and pops up a "Share"/"Allow Remote Interaction" consent
+    /// dialog for it. Focus detection still works normally (X11 selection
+    /// ownership and focus queries aren't gated), but every paste places
+    /// content on the clipboard only, for the user to complete with their
+    /// own Ctrl+V, rather than ever attempting the synthetic keystroke that
+    /// would otherwise interrupt the flow with that dialog.
+    pub fn clipboard_only(conn: C) -> Self {
+        Self { conn, focus_detection_supported: true, key_synthesis_supported: false }
     }
 
     pub fn simulate_paste(
@@ -62,6 +77,11 @@ impl<C: X11Connection> PasteSimulator<C> {
         mode: PasteMode,
     ) -> Result<(), PlatformError> {
         let text = resolve_paste_text(representations, mode).unwrap_or_default();
+
+        if !self.key_synthesis_supported {
+            self.conn.write_selection(&text);
+            return Ok(());
+        }
 
         let window = match target {
             Some(window) => window,
@@ -226,6 +246,37 @@ mod tests {
 
         let ops = simulator.conn.ops_log();
         assert_eq!(ops[1], RecordedOp::SynthesizeKey(7, "ctrl+v".to_string()));
+    }
+
+    #[test]
+    fn clipboard_only_mode_never_synthesizes_a_key_even_with_a_focused_window() {
+        // GNOME/Mutter treats XTestFakeInput from an XWayland client as a
+        // security-sensitive operation gated behind its Remote Desktop
+        // portal consent dialog - popping that dialog up on every paste is
+        // effectively a broken auto-paste experience on that platform.
+        // `clipboard_only` mode is the opt-out: focus detection still works
+        // normally, but the synthetic keystroke is never attempted, so the
+        // user pastes manually via Ctrl+V themselves.
+        let conn = FakeX11Connection::new();
+        conn.set_focused_window(Some(7));
+        let simulator = PasteSimulator::clipboard_only(conn);
+        let representations = vec![ClipRepresentation::new("text/plain", 0).with_text_value("hello")];
+
+        simulator.simulate_paste(Some(7), &representations, PasteMode::Auto).unwrap();
+
+        let ops = simulator.conn.ops_log();
+        assert_eq!(ops, vec![RecordedOp::WriteSelection("hello".to_string())]);
+    }
+
+    #[test]
+    fn clipboard_only_mode_still_succeeds_with_no_focused_window() {
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::clipboard_only(conn);
+        let representations = vec![ClipRepresentation::new("text/plain", 0).with_text_value("hello")];
+
+        let result = simulator.simulate_paste(None, &representations, PasteMode::Auto);
+
+        assert!(result.is_ok());
     }
 
     #[test]

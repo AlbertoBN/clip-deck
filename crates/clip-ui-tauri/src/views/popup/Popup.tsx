@@ -106,42 +106,49 @@ export function Popup() {
   }, [clips.length])
 
   // Attached to `document` rather than the search input: focus can leave
-  // the input (e.g. a click elsewhere in the popup), and Escape should still
-  // hide the popup regardless of what currently has focus. Hides rather than
-  // closes - this window is shown/hidden (not destroyed) across hotkey
-  // presses, same as the main/settings windows' close-button handling; a
-  // real `.close()` here would leave nothing for the next hotkey press to
-  // show.
+  // the input (e.g. a click elsewhere in the popup, or focus never landing
+  // on it for some environment-specific reason), and every one of these
+  // keys must still work regardless of what currently has focus - not just
+  // Escape. Re-registers on every `clips`/`selectedIndex` change so the
+  // closure below always sees fresh values (same pattern Manager.tsx uses
+  // for its own window-level keydown listener).
   useEffect(() => {
     const handleDocumentKeyDown = async (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
+        // Hides rather than closes - this window is shown/hidden (not
+        // destroyed) across hotkey presses, same as the main/settings
+        // windows' close-button handling; a real `.close()` here would
+        // leave nothing for the next hotkey press to show.
         await getCurrentWindow().hide()
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setSelectedIndex((index) => Math.min(index + 1, Math.max(clips.length - 1, 0)))
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setSelectedIndex((index) => Math.max(index - 1, 0))
+      } else if (event.key === 'Enter') {
+        event.preventDefault()
+        const selected = clips[selectedIndex]
+        if (selected) {
+          // clipd's paste simulation targets whatever window is currently
+          // focused at the moment it runs, not whatever was focused before
+          // the popup opened - so the popup must hide (returning OS focus
+          // to the target application) *before* asking the daemon to
+          // simulate the paste, not after. Pasting first would send the
+          // synthetic keystroke into the popup itself instead of the
+          // intended app.
+          await getCurrentWindow().hide()
+          await callCommand('paste_clip', { id: selected.id, mode: 'auto' })
+        }
       }
     }
     document.addEventListener('keydown', handleDocumentKeyDown)
     return () => document.removeEventListener('keydown', handleDocumentKeyDown)
-  }, [])
+  }, [clips, selectedIndex])
 
   const beginResize = (direction: ResizeDirection) => {
     void getCurrentWindow().startResizeDragging(direction)
-  }
-
-  const handleKeyDown = async (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      setSelectedIndex((index) => Math.min(index + 1, Math.max(clips.length - 1, 0)))
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      setSelectedIndex((index) => Math.max(index - 1, 0))
-    } else if (event.key === 'Enter') {
-      event.preventDefault()
-      const selected = clips[selectedIndex]
-      if (selected) {
-        await callCommand('paste_clip', { id: selected.id, mode: 'auto' })
-        await getCurrentWindow().hide()
-      }
-    }
   }
 
   return (
@@ -152,7 +159,6 @@ export function Popup() {
           aria-label="Search clips"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={handleKeyDown}
         />
         <ul role="listbox">
           {clips.map((clip, index) => {
