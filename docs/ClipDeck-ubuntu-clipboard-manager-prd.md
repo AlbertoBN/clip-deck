@@ -12,7 +12,7 @@ The recommended v1 architecture is a background Rust daemon that owns clipboard 
 
 - Capture normal copy operations automatically, without requiring a special “send to clipboard manager” action.
 - Provide a fast keyboard-first popup for searching and selecting previous clips.
-- Support the most useful Ditto-style behaviors in v1: tray access, global hotkey activation, searchable history, pinned clips, groups, preview, and pasting back to the prior window.[cite:1][cite:17]
+- Support the most useful Ditto-style behaviors in v1: tray access, global hotkey activation, searchable history, pinned clips, preview, and pasting back to the prior window.[cite:1][cite:17]
 - Keep the UI neutral, dense, and distraction-free.
 - Store data locally first, with a path to optional sync later.
 
@@ -34,7 +34,6 @@ Core v1 use cases:
 - Search all recent copied text with low latency.
 - Paste a prior clip as rich content or plain text.
 - Pin important snippets such as SSH commands or ticket templates.
-- Group reusable clips.
 - Exclude secrets or sensitive apps from persistence.
 
 ## Functional requirements
@@ -53,7 +52,7 @@ Core v1 use cases:
 
 1. The app shall support full-text search over captured text using SQLite FTS5.[cite:16]
 2. The app shall support prefix matching for incremental search and ranked results from the search index.[cite:16]
-3. The app shall allow filtering by type, pinned state, and group.
+3. The app shall allow filtering by type, pinned state.
 4. The app shall return search results quickly enough to feel instant for a local desktop app.
 
 ### Paste and interaction
@@ -67,10 +66,9 @@ Core v1 use cases:
 ### Organization and lifecycle
 
 1. The app shall support pinned clips.
-2. The app shall support groups or folders.
-3. The app shall support retention settings, including auto-delete windows.
-4. The app shall support deletion of single clips and bulk clear actions.
-5. The app shall record clip metadata such as creation time, last used time, source app when available, MIME types, and byte size.
+2. The app shall support retention settings, including auto-delete windows.
+3. The app shall support deletion of single clips and bulk clear actions.
+4. The app shall record clip metadata such as creation time, last used time, source app when available, MIME types, and byte size.
 
 ## UX requirements
 
@@ -90,7 +88,7 @@ The UI should feel closer to a command palette than to a dashboard. Ditto itself
 | Surface | Purpose | Notes |
 |---|---|---|
 | Popup picker | Fast search and paste | Opens from global hotkey; search field focused by default.[cite:17] |
-| Main manager | Browse, filter, group, delete, inspect | Opens from tray menu or expanded popup action. |
+| Main manager | Browse, filter, delete, inspect | Opens from tray menu or expanded popup action. |
 | Preview dialog/pane | Full text, HTML, image preview | Ditto exposes dedicated preview behavior for full text or image/html inspection.[cite:17] |
 | Tray menu | Utility entry point | Tauri 2 supports tray icon creation, menus, and event handling.[cite:17] |
 | Settings | Rules, retention, hotkeys, diagnostics | Includes backend capability status for X11/Wayland. |
@@ -146,7 +144,7 @@ Responsibilities:
 Responsibilities:
 - Durable clip metadata.
 - FTS5 search index.[cite:16]
-- Group and rule storage.
+- Rule storage.
 - Event log.
 - Optional WAL-backed local reliability.
 
@@ -185,7 +183,7 @@ clip-deck/
 Shared domain logic and models.
 
 Suggested modules:
-- `models`: `Clip`, `ClipRepresentation`, `Group`, `Rule`, `AppContext`, `PasteMode`.
+- `models`: `Clip`, `ClipRepresentation`, `Rule`, `AppContext`, `PasteMode`.
 - `mime`: canonical representation handling.
 - `hashing`: stable content hashing.
 - `search`: query parsing helpers and ranking inputs.
@@ -200,7 +198,6 @@ Suggested modules:
 - `db`: connection pool, pragmas, migrations.
 - `clips`: insert, update, delete, list, get.
 - `fts`: FTS5 synchronization and search queries.[cite:16]
-- `groups`: CRUD and hierarchy.
 - `rules`: CRUD for exclusion and privacy rules.
 - `events`: audit/event log.
 - `retention`: auto-delete and pruning jobs.
@@ -291,7 +288,6 @@ The data model should preserve one canonical clip plus multiple representations,
 - `clips`: canonical item metadata.
 - `clip_representations`: one row per MIME representation.
 - `clips_fts`: FTS5 index for text search.[cite:16]
-- `groups`: logical organization.
 - `app_rules`: exclusions and privacy rules.
 - `settings`: key-value configuration.
 - `events`: audit and usage trail.
@@ -301,14 +297,6 @@ The data model should preserve one canonical clip plus multiple representations,
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS groups (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    parent_group_id TEXT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-);
 
 CREATE TABLE IF NOT EXISTS clips (
     id TEXT PRIMARY KEY,
@@ -324,7 +312,6 @@ CREATE TABLE IF NOT EXISTS clips (
     is_favorite INTEGER NOT NULL DEFAULT 0,
     is_pinned INTEGER NOT NULL DEFAULT 0,
     is_deleted INTEGER NOT NULL DEFAULT 0,
-    group_id TEXT NULL REFERENCES groups(id) ON DELETE SET NULL,
     paste_mode_default TEXT NOT NULL DEFAULT 'auto',
     metadata_json TEXT NULL
 );
@@ -338,8 +325,6 @@ ON clips(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_clips_last_used_at
 ON clips(last_used_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_clips_group_id
-ON clips(group_id);
 
 CREATE INDEX IF NOT EXISTS idx_clips_pinned
 ON clips(is_pinned, created_at DESC);
@@ -444,10 +429,8 @@ A Unix domain socket is the simplest v1 transport. If tighter desktop integratio
 - `GetClip { id }`
 - `PasteClip { id, mode }`
 - `PinClip { id, pinned }`
-- `AssignGroup { id, group_id }`
 - `DeleteClip { id }`
 - `ClearHistory { scope }`
-- `ListGroups`
 - `SaveRule`
 - `DeleteRule`
 - `GetSettings`
@@ -472,7 +455,7 @@ Suggested query strategy:
 - Incremental UI search uses prefix matching for the last term.
 - Ranking uses BM25 or a hybrid score that also boosts recency and pinned status.
 - Empty query falls back to recent clips sorted by `created_at DESC` and then pinned first.
-- Search filters narrow by MIME family, group, source app, and favorite state.
+- Search filters narrow by MIME family, source app, and favorite state.
 
 ## Clipboard and platform strategy
 
@@ -569,13 +552,12 @@ Acceptance:
 
 Deliverables:
 - Pinned clips.
-- Groups.
 - Deletion and bulk clear.
 - Retention jobs.
 - App exclusion rules.
 
 Acceptance:
-- User can pin, group, delete, and auto-prune clips.
+- User can pin, delete, and auto-prune clips.
 - Exclusion rules prevent persistence for matched apps.
 
 ### Milestone 4: Wayland adapter and diagnostics
