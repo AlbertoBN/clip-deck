@@ -157,7 +157,14 @@ pub struct X11DaemonBackend {
 }
 
 impl X11DaemonBackend {
-    pub fn connect() -> anyhow::Result<Self> {
+    /// `is_wayland_session` selects the paste strategy: GNOME/Mutter treats
+    /// XTest key synthesis from an XWayland client as a security-sensitive
+    /// Remote Desktop portal operation and pops up a consent dialog for it
+    /// on every paste, so a Wayland session uses `PasteSimulator::
+    /// clipboard_only` instead of the normal synthetic-keystroke path, even
+    /// though X11 is still preferred here for its richer capture
+    /// capabilities (HTML/image representations, working change detection).
+    pub fn connect(is_wayland_session: bool) -> anyhow::Result<Self> {
         let capture_conn = clip_platform::x11::RealX11Connection::connect(None)
             .map_err(|e| anyhow::anyhow!("failed to open X11 connection for capture: {e}"))?;
         let focus_conn = clip_platform::x11::RealX11Connection::connect(None)
@@ -165,10 +172,15 @@ impl X11DaemonBackend {
         let paste_conn = clip_platform::x11::RealX11Connection::connect(None)
             .map_err(|e| anyhow::anyhow!("failed to open X11 connection for paste: {e}"))?;
         let blob_dir = clip_core::config::AppPaths::resolve().data_dir.join("blobs");
+        let paste = if is_wayland_session {
+            clip_platform::paste::PasteSimulator::clipboard_only(paste_conn)
+        } else {
+            clip_platform::paste::PasteSimulator::new(paste_conn)
+        };
         Ok(Self {
             capture: clip_platform::x11::X11Backend::new(capture_conn, blob_dir),
             focus: clip_platform::focus::FocusTracker::new(focus_conn),
-            paste: clip_platform::paste::PasteSimulator::new(paste_conn),
+            paste,
         })
     }
 }

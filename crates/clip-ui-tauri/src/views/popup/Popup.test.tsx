@@ -126,6 +126,22 @@ describe('Popup', () => {
     expect(options[1]).toHaveAttribute('aria-selected', 'true')
   })
 
+  it('moves selection with arrow keys even when focus is not on the search input', async () => {
+    // Escape already works regardless of focus (it's on a document-level
+    // listener); arrows/Enter must too - a click elsewhere in the popup, or
+    // focus never having landed on the input for some environment-specific
+    // reason, must not leave the keyboard navigation dead.
+    vi.mocked(invoke).mockResolvedValue([clip('c1'), clip('c2')])
+
+    render(<Popup />)
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2))
+    screen.getByLabelText(/search/i).blur()
+
+    fireEvent.keyDown(document, { key: 'ArrowDown' })
+
+    await waitFor(() => expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true'))
+  })
+
   it('does not move selection past the top on ArrowUp', async () => {
     vi.mocked(invoke).mockResolvedValue([clip('c1'), clip('c2')])
     const user = userEvent.setup()
@@ -154,6 +170,32 @@ describe('Popup', () => {
 
     await waitFor(() => expect(hide).toHaveBeenCalled())
     expect(invoke).toHaveBeenCalledWith('paste_clip', { id: 'c1', mode: 'auto' })
+  })
+
+  it('hides the popup before asking the daemon to simulate the paste, not after', async () => {
+    // clipd's paste simulation targets whatever window is currently
+    // focused at the moment it runs (`paste_to_focused_window`) - not
+    // whatever was focused before the popup opened. If `paste_clip` were
+    // invoked before the popup window actually hides, the synthetic paste
+    // would land in the popup itself (e.g. its own search input) instead
+    // of the application the user meant to paste into.
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'search_clips') return [clip('c1')]
+      if (command === 'paste_clip') return undefined
+      return undefined
+    })
+    const user = userEvent.setup()
+
+    render(<Popup />)
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1))
+
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(hide).toHaveBeenCalled())
+    const pasteCallIndex = vi.mocked(invoke).mock.calls.findIndex(([command]) => command === 'paste_clip')
+    expect(pasteCallIndex).toBeGreaterThanOrEqual(0)
+    const pasteInvocationOrder = vi.mocked(invoke).mock.invocationCallOrder[pasteCallIndex]
+    expect(hide.mock.invocationCallOrder[0]).toBeLessThan(pasteInvocationOrder)
   })
 
   it('closes the popup on Escape without pasting', async () => {
