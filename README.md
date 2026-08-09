@@ -1,4 +1,4 @@
-# ClipDeck
+# <img src="assets/clipdeck-deck-fan.svg" width="40" height="40" align="center"> ClipDeck
 
 A clipboard manager for Linux, inspired by [Ditto](https://ditto-cp.sourceforge.io/) for Windows.
 A Rust daemon captures clipboard history in the background — independent of any UI — and a
