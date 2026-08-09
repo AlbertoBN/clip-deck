@@ -16,20 +16,40 @@ export function Manager() {
   const itemRefs = useRef<(HTMLLIElement | null)[]>([])
 
   useEffect(() => {
+    setSelectedIndex(0)
     void searchClips('', { pinned_only: pinnedOnly })
   }, [pinnedOnly, searchClips])
 
   useEffect(() => {
+    // Guards against a React StrictMode dev-mode race: effects run
+    // mount -> cleanup -> mount synchronously, but `subscribeToEvents`
+    // resolves asynchronously - if cleanup ran before it resolved, `fn`
+    // would never be captured and the listener would leak, silently
+    // doubling every subsequent daemon event. `cancelled` makes a
+    // late-arriving `fn` unsubscribe itself immediately instead.
+    let cancelled = false
     let unlisten: (() => void) | undefined
     void subscribeToEvents().then((fn) => {
-      unlisten = fn
+      if (cancelled) {
+        fn()
+      } else {
+        unlisten = fn
+      }
     })
-    return () => unlisten?.()
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
   }, [subscribeToEvents])
 
+  // Clamps (rather than resets) the selection when the list shrinks - e.g.
+  // a live ClipDeleted event removing the selected row. A live
+  // ClipCaptured/ClipUpdated event must not silently reset the user's
+  // current arrow-key position back to the top; only an explicit new
+  // search (the pinned-only filter, above) does that.
   useEffect(() => {
-    setSelectedIndex(0)
-  }, [clips])
+    setSelectedIndex((index) => Math.min(index, Math.max(clips.length - 1, 0)))
+  }, [clips.length])
 
   useEffect(() => {
     itemRefs.current[selectedIndex]?.scrollIntoView({ block: 'nearest' })

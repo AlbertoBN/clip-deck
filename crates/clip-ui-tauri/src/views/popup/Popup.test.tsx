@@ -22,6 +22,7 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({ hide, startResizeDragging }),
 }))
 
+import { listen } from '@tauri-apps/api/event'
 import { useClipStore } from '../../state/store'
 import type { Clip } from '../../state/types'
 import { Popup } from './Popup'
@@ -202,6 +203,39 @@ describe('Popup', () => {
     expect(invoke).toHaveBeenCalledWith('search_clips', expect.objectContaining({ query: '' }))
   })
 
+  it('unsubscribes from the daemon event stream even if unmounted before the listener finishes registering', async () => {
+    // Reproduces a React StrictMode race: `subscribeToEvents()` (like
+    // `listen()`) resolves asynchronously, and the effect only learns its
+    // own `unlisten` function inside that `.then()`. StrictMode's dev-mode
+    // mount -> cleanup -> mount double-invoke runs the cleanup function
+    // *before* that promise has a chance to resolve, so if the effect
+    // doesn't guard against this, the listener from the first mount is
+    // never torn down - leaking a live subscription that goes on to
+    // double-process every daemon event for the component's whole lifetime
+    // (e.g. a single ClipCaptured event prepending the same clip twice).
+    let resolveListen!: (unlisten: () => void) => void
+    vi.mocked(invoke).mockResolvedValue([])
+    const originalListenImpl = vi.mocked(listen).getMockImplementation()
+    vi.mocked(listen).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveListen = resolve as unknown as (unlisten: () => void) => void
+        }),
+    )
+
+    const { unmount } = render(<Popup />)
+    unmount()
+
+    const leakedUnlisten = vi.fn()
+    resolveListen(leakedUnlisten)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(leakedUnlisten).toHaveBeenCalled()
+
+    if (originalListenImpl) vi.mocked(listen).mockImplementation(originalListenImpl)
+  })
+
   it('adds a newly captured clip live, without waiting for the next HotkeyPressed', async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
       if (command === 'search_clips') return [clip('c1')]
@@ -217,6 +251,56 @@ describe('Popup', () => {
     })
 
     await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2))
+  })
+
+  it('does not let the mount-time debounced search clobber an arrow-key press made shortly after opening', async () => {
+    // The debounce-search effect runs once after every mount regardless of
+    // its dependency array (React always runs a fresh effect after the
+    // first render), scheduling a 200ms-later re-search independent of the
+    // synchronous mount-time search `activate()` already issued. If a user
+    // presses an arrow key inside that 200ms window, that leftover timeout
+    // firing later must not reset their selection back to the top.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.mocked(invoke).mockResolvedValue([clip('c1'), clip('c2')])
+
+    render(<Popup />)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getAllByRole('option')).toHaveLength(2)
+
+    fireEvent.keyDown(screen.getByLabelText(/search/i), { key: 'ArrowDown' })
+    expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true')
+
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync()
+    })
+
+    expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true')
+
+    vi.useRealTimers()
+  })
+
+  it('keeps the current arrow-key selection when a clip is captured live, instead of jumping back to the top', async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'search_clips') return [clip('c1'), clip('c2')]
+      if (command === 'get_clip') return clip('new1')
+      return undefined
+    })
+    const user = userEvent.setup()
+
+    render(<Popup />)
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2))
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true')
+
+    await act(async () => {
+      await eventHandler?.({ payload: { type: 'ClipCaptured', clip_id: 'new1' } })
+    })
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(3))
+
+    expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'false')
   })
 
   it('shows a thumbnail for an image clip instead of a blank row', async () => {

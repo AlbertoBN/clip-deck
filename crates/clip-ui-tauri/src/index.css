@@ -152,6 +152,12 @@ code {
 
 .manager li[aria-selected='true'] {
   background: var(--accent-bg);
+  /* Forces this row onto its own compositing layer so WebKitGTK actually
+     repaints the background-color change on arrow-key navigation, rather
+     than sometimes leaving the previous frame on screen until some other
+     unrelated repaint happens to touch it. */
+  transform: translateZ(0);
+  will-change: background-color;
 }
 
 .manager .clip-text {
@@ -298,6 +304,11 @@ code {
 
 .popup li[aria-selected='true'] {
   background: var(--accent-bg);
+  /* See the identical rule under .manager - forces its own compositing
+     layer so WebKitGTK reliably repaints the highlight on arrow-key
+     navigation instead of requiring an unrelated repaint to nudge it. */
+  transform: translateZ(0);
+  will-change: background-color;
 }
 
 .popup .clip-text {
