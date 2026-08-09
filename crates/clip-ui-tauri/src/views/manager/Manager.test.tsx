@@ -16,6 +16,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   }),
 }))
 
+import { listen } from '@tauri-apps/api/event'
 import { useClipStore } from '../../state/store'
 import type { Clip } from '../../state/types'
 import { Manager } from './Manager'
@@ -53,6 +54,35 @@ beforeEach(() => {
 })
 
 describe('Manager', () => {
+  it('unsubscribes from the daemon event stream even if unmounted before the listener finishes registering', async () => {
+    // Same StrictMode dev-mode race as Popup's: mount -> cleanup -> mount
+    // runs synchronously, but subscribeToEvents() resolves asynchronously.
+    // Without a cancelled-guard, a cleanup that runs first never learns the
+    // eventual unlisten function, leaking a listener that silently doubles
+    // every subsequent ClipCaptured/ClipUpdated/ClipDeleted event.
+    let resolveListen!: (unlisten: () => void) => void
+    vi.mocked(invoke).mockResolvedValue([])
+    const originalListenImpl = vi.mocked(listen).getMockImplementation()
+    vi.mocked(listen).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveListen = resolve as unknown as (unlisten: () => void) => void
+        }),
+    )
+
+    const { unmount } = render(<Manager />)
+    unmount()
+
+    const leakedUnlisten = vi.fn()
+    resolveListen(leakedUnlisten)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(leakedUnlisten).toHaveBeenCalled()
+
+    if (originalListenImpl) vi.mocked(listen).mockImplementation(originalListenImpl)
+  })
+
   it('clicking Settings calls show_settings_window', async () => {
     const user = userEvent.setup()
     render(<Manager />)
@@ -124,6 +154,24 @@ describe('Manager', () => {
 
     const items = screen.getAllByRole('listitem')
     expect(items[1]).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps the current arrow-key selection when a clip is captured live, instead of jumping back to the top', async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === 'search_clips') return [clip('c1'), clip('c2')]
+      if (command === 'get_clip') return clip('new1')
+      return undefined
+    })
+    const user = userEvent.setup()
+    render(<Manager />)
+    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(2))
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getAllByRole('listitem')[1]).toHaveAttribute('aria-selected', 'true')
+
+    eventHandler?.({ payload: { type: 'ClipCaptured', clip_id: 'new1' } })
+    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(3))
+
+    expect(screen.getAllByRole('listitem')[0]).toHaveAttribute('aria-selected', 'false')
   })
 
   it('scrolls the newly selected clip into view on ArrowDown', async () => {

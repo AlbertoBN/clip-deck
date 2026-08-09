@@ -34,6 +34,7 @@ export function Popup() {
 
   const activate = () => {
     inputRef.current?.focus()
+    setSelectedIndex(0)
     void searchClips('')
   }
 
@@ -50,28 +51,59 @@ export function Popup() {
     // subscribeToEvents (rather than a separate `listen` call) also keeps
     // the popup's clip list live for ClipCaptured/ClipUpdated/ClipDeleted
     // while it's open, not just on the next hotkey press.
+    // Guards against a React StrictMode dev-mode race: effects run
+    // mount -> cleanup -> mount synchronously, but `subscribeToEvents`
+    // resolves asynchronously - if cleanup ran before it resolved, `fn`
+    // would never be captured and the listener would leak, silently
+    // doubling every subsequent daemon event. `cancelled` makes a
+    // late-arriving `fn` unsubscribe itself immediately instead.
+    let cancelled = false
     let unlisten: (() => void) | undefined
     void subscribeToEvents((event) => {
       if (event.type === 'HotkeyPressed') {
         activate()
       }
     }).then((fn) => {
-      unlisten = fn
+      if (cancelled) {
+        fn()
+      } else {
+        unlisten = fn
+      }
     })
-    return () => unlisten?.()
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subscribeToEvents])
 
+  // Every effect runs once after the first render regardless of its
+  // dependency array, so without this guard this would schedule a
+  // redundant re-search 200ms after mount even though `activate()` (above)
+  // already searched synchronously on mount - and that leftover timeout,
+  // firing independently of anything the user does in the meantime, would
+  // reset an arrow-key selection made in that window right back to the top.
+  const isFirstQueryEffect = useRef(true)
   useEffect(() => {
+    if (isFirstQueryEffect.current) {
+      isFirstQueryEffect.current = false
+      return
+    }
     const handle = setTimeout(() => {
+      setSelectedIndex(0)
       void searchClips(query)
     }, SEARCH_DEBOUNCE_MS)
     return () => clearTimeout(handle)
   }, [query, searchClips])
 
+  // Clamps (rather than resets) the selection when the list shrinks - e.g.
+  // a live ClipDeleted event removing the selected row. A live
+  // ClipCaptured/ClipUpdated event must not silently reset the user's
+  // current arrow-key position back to the top; only an explicit new
+  // search (`activate`, above, or a typed query, above) does that.
   useEffect(() => {
-    setSelectedIndex(0)
-  }, [clips])
+    setSelectedIndex((index) => Math.min(index, Math.max(clips.length - 1, 0)))
+  }, [clips.length])
 
   // Attached to `document` rather than the search input: focus can leave
   // the input (e.g. a click elsewhere in the popup), and Escape should still

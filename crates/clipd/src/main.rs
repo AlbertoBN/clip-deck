@@ -73,5 +73,18 @@ async fn main() -> anyhow::Result<()> {
 
     app::run(db_path.to_string_lossy().to_string(), socket_path, backend, backend_name.to_string(), hotkeys, shutdown)
         .await?;
-    Ok(())
+
+    // `run` already drains in-flight IPC work and returns cleanly once
+    // `shutdown` resolves - but the clipboard capture loop runs on a
+    // `spawn_blocking` thread that blocks forever in a synchronous read
+    // waiting for the next clipboard change (see `x11::real::poll_selection_
+    // change`/`wayland::real`'s equivalent), with no way to be woken up
+    // early. Tokio's runtime, dropped when `main` returns normally, waits
+    // for that thread to finish before the process can exit - which it
+    // never does on its own, turning a plain SIGTERM into a hang that only
+    // `kill -9` clears. Exit immediately instead: everything that matters
+    // (in-flight IPC responses, SQLite writes) is already durable by the
+    // time `run` returns, so there is nothing left to lose by not waiting
+    // for that thread.
+    std::process::exit(0);
 }
