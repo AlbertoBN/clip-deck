@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { WindowGripper } from '../../components/WindowGripper'
 import { callCommand } from '../../state/client'
 import { findThumbnail } from '../../state/clips'
 import { useClipStore } from '../../state/store'
@@ -96,51 +97,56 @@ export function Manager() {
 
   return (
     <div className="manager">
-      <div className="filters">
-        <label>
-          <input type="checkbox" checked={pinnedOnly} onChange={(event) => setPinnedOnly(event.target.checked)} />
-          Pinned only
-        </label>
-        <button type="button" onClick={() => handleBulkClear('excluding_pinned')}>
-          Clear history (excluding pinned)
-        </button>
-        <button type="button" onClick={() => handleBulkClear('all')}>
-          Clear all history
-        </button>
-        <button type="button" onClick={() => callCommand('show_settings_window')}>
-          Settings
-        </button>
+      <div className="manager-content">
+        <div className="filters">
+          <label>
+            <input type="checkbox" checked={pinnedOnly} onChange={(event) => setPinnedOnly(event.target.checked)} />
+            Pinned only
+          </label>
+          <button type="button" onClick={() => handleBulkClear('excluding_pinned')}>
+            Clear history (excluding pinned)
+          </button>
+          <button type="button" onClick={() => handleBulkClear('all')}>
+            Clear all history
+          </button>
+          <button type="button" onClick={() => callCommand('show_settings_window')}>
+            Settings
+          </button>
+        </div>
+        <ul>
+          {clips.map((clip, index) => (
+            <li
+              key={clip.id}
+              ref={(el) => {
+                itemRefs.current[index] = el
+              }}
+              aria-selected={index === selectedIndex}
+            >
+              <span className="clip-text">
+                {(() => {
+                  const thumbnail = findThumbnail(clip)
+                  return thumbnail?.blob_path ? (
+                    <img className="clip-thumbnail" src={convertFileSrc(thumbnail.blob_path)} alt="Clip thumbnail" />
+                  ) : (
+                    clip.display_text
+                  )
+                })()}
+              </span>
+              <span className="clip-actions">
+                <button type="button" aria-label={`Pin ${clip.id}`} onClick={() => handlePin(clip.id, !clip.is_pinned)}>
+                  {clip.is_pinned ? 'Unpin' : 'Pin'}
+                </button>
+                <button type="button" aria-label={`Delete ${clip.id}`} onClick={() => handleDelete(clip.id)}>
+                  Delete
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
       </div>
-      <ul>
-        {clips.map((clip, index) => (
-          <li
-            key={clip.id}
-            ref={(el) => {
-              itemRefs.current[index] = el
-            }}
-            aria-selected={index === selectedIndex}
-          >
-            <span className="clip-text">
-              {(() => {
-                const thumbnail = findThumbnail(clip)
-                return thumbnail?.blob_path ? (
-                  <img className="clip-thumbnail" src={convertFileSrc(thumbnail.blob_path)} alt="Clip thumbnail" />
-                ) : (
-                  clip.display_text
-                )
-              })()}
-            </span>
-            <span className="clip-actions">
-              <button type="button" aria-label={`Pin ${clip.id}`} onClick={() => handlePin(clip.id, !clip.is_pinned)}>
-                {clip.is_pinned ? 'Unpin' : 'Pin'}
-              </button>
-              <button type="button" aria-label={`Delete ${clip.id}`} onClick={() => handleDelete(clip.id)}>
-                Delete
-              </button>
-            </span>
-          </li>
-        ))}
-      </ul>
+      {/* Main window has no native decorations either (see tauri.conf.json),
+          exactly like the popup - same shared gripper for drag/close/resize. */}
+      <WindowGripper />
     </div>
   )
 }

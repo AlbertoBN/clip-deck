@@ -16,6 +16,11 @@ vi.mock('@tauri-apps/api/event', () => ({
   }),
 }))
 
+const hide = vi.fn().mockResolvedValue(undefined)
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({ hide, startResizeDragging: vi.fn().mockResolvedValue(undefined) }),
+}))
+
 import { listen } from '@tauri-apps/api/event'
 import { useClipStore } from '../../state/store'
 import type { Clip } from '../../state/types'
@@ -46,6 +51,7 @@ function clip(id: string, overrides: Partial<Clip> = {}): Clip {
 beforeEach(() => {
   useClipStore.setState({ clips: [], connectionState: 'connected' })
   eventHandler = undefined
+  hide.mockClear()
   vi.mocked(invoke).mockReset()
   vi.mocked(invoke).mockImplementation(async (command: string) => {
     if (command === 'search_clips') return []
@@ -54,6 +60,21 @@ beforeEach(() => {
 })
 
 describe('Manager', () => {
+  it('renders the same window gripper as the popup, including a close button that hides the main window', async () => {
+    // The main window has no native decorations (see tauri.conf.json),
+    // exactly like the popup - it needs the identical shared gripper for
+    // dragging/closing/resizing, not a native title bar.
+    const user = userEvent.setup()
+
+    render(<Manager />)
+
+    const label = screen.getByText('ClipDeck')
+    expect(label.closest('[data-tauri-drag-region]')).not.toBeNull()
+
+    await user.click(screen.getByRole('button', { name: /close/i }))
+    expect(hide).toHaveBeenCalled()
+  })
+
   it('unsubscribes from the daemon event stream even if unmounted before the listener finishes registering', async () => {
     // Same StrictMode dev-mode race as Popup's: mount -> cleanup -> mount
     // runs synchronously, but subscribeToEvents() resolves asynchronously.

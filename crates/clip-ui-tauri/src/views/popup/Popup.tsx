@@ -1,28 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { WindowGripper } from '../../components/WindowGripper'
 import { callCommand } from '../../state/client'
 import { findThumbnail } from '../../state/clips'
 import { useClipStore } from '../../state/store'
 
 const SEARCH_DEBOUNCE_MS = 200
-
-type ResizeDirection = 'East' | 'North' | 'NorthEast' | 'NorthWest' | 'South' | 'SouthEast' | 'SouthWest' | 'West'
-
-// Popup has no native decorations, so the OS/compositor doesn't render any
-// resize border for it - `resizable: true` in tauri.conf.json alone has
-// nothing to hook into. These invisible edge/corner overlays are the
-// replacement, each starting a native resize drag on mousedown.
-const RESIZE_HANDLES: { direction: ResizeDirection; className: string }[] = [
-  { direction: 'North', className: 'resize-n' },
-  { direction: 'South', className: 'resize-s' },
-  { direction: 'West', className: 'resize-w' },
-  { direction: 'East', className: 'resize-e' },
-  { direction: 'NorthWest', className: 'resize-nw' },
-  { direction: 'NorthEast', className: 'resize-ne' },
-  { direction: 'SouthWest', className: 'resize-sw' },
-  { direction: 'SouthEast', className: 'resize-se' },
-]
 
 export function Popup() {
   const [query, setQuery] = useState('')
@@ -147,10 +131,6 @@ export function Popup() {
     return () => document.removeEventListener('keydown', handleDocumentKeyDown)
   }, [clips, selectedIndex])
 
-  const beginResize = (direction: ResizeDirection) => {
-    void getCurrentWindow().startResizeDragging(direction)
-  }
-
   return (
     <div className="popup">
       <div className="popup-content">
@@ -176,25 +156,8 @@ export function Popup() {
         </ul>
       </div>
       {/* Popup has no native decorations, so this gripper is the only way to
-          move or close it. The close button is a sibling of the drag
-          region (not nested inside it) so a click on it isn't swallowed by
-          the drag region's own mousedown handling. */}
-      <div className="popup-gripper">
-        <button type="button" aria-label="Close" className="popup-gripper-close" onClick={() => getCurrentWindow().hide()}>
-          ×
-        </button>
-        <div className="popup-gripper-drag" data-tauri-drag-region>
-          <span className="popup-gripper-label">ClipDeck</span>
-        </div>
-      </div>
-      {RESIZE_HANDLES.map(({ direction, className }) => (
-        <div
-          key={direction}
-          className={`resize-handle ${className}`}
-          data-testid={`resize-handle-${direction.toLowerCase()}`}
-          onMouseDown={() => beginResize(direction)}
-        />
-      ))}
+          move or close it. */}
+      <WindowGripper />
     </div>
   )
 }
