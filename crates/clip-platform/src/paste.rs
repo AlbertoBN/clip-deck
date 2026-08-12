@@ -33,6 +33,34 @@ pub fn resolve_paste_text(representations: &[ClipRepresentation], mode: PasteMod
     }
 }
 
+/// The resolved content a paste/copy actually places on the clipboard.
+enum PasteContent {
+    Text(String),
+    Image { mime: String, bytes: Vec<u8> },
+}
+
+/// Like `resolve_paste_text`, but falls back to the clip's image bytes (read
+/// from its `blob_path`) when there is no text representation to paste at
+/// all - a clip captured as an image only has no `text_value` anywhere, so
+/// `resolve_paste_text` alone would silently resolve to an empty string,
+/// clobbering the clipboard with nothing instead of the image. Text is
+/// always preferred when present, matching `resolve_paste_text`'s existing
+/// behavior for mixed representations.
+fn resolve_paste_content(representations: &[ClipRepresentation], mode: PasteMode) -> PasteContent {
+    if let Some(text) = resolve_paste_text(representations, mode) {
+        return PasteContent::Text(text);
+    }
+    let image = representations
+        .iter()
+        .find(|r| !r.is_preview && r.mime_type.starts_with("image/"))
+        .and_then(|r| Some((r, r.blob_path.as_ref()?)))
+        .and_then(|(r, blob_path)| std::fs::read(blob_path).ok().map(|bytes| (r.mime_type.clone(), bytes)));
+    match image {
+        Some((mime, bytes)) => PasteContent::Image { mime, bytes },
+        None => PasteContent::Text(String::new()),
+    }
+}
+
 /// Simulates a paste into the previously focused window: places the
 /// resolved content on the clipboard, then synthesizes the paste key
 /// combination targeted at that window.
@@ -70,16 +98,26 @@ impl<C: X11Connection> PasteSimulator<C> {
         Self { conn, focus_detection_supported: true, key_synthesis_supported: false }
     }
 
+    /// Writes `content` to the connection via whichever primitive matches
+    /// its kind - `write_selection` for text, `write_selection_target` for
+    /// an image's raw bytes under its own mime type.
+    fn write_content(&self, content: &PasteContent) {
+        match content {
+            PasteContent::Text(text) => self.conn.write_selection(text),
+            PasteContent::Image { mime, bytes } => self.conn.write_selection_target(mime, bytes),
+        }
+    }
+
     pub fn simulate_paste(
         &self,
         target: Option<WindowId>,
         representations: &[ClipRepresentation],
         mode: PasteMode,
     ) -> Result<(), PlatformError> {
-        let text = resolve_paste_text(representations, mode).unwrap_or_default();
+        let content = resolve_paste_content(representations, mode);
 
         if !self.key_synthesis_supported {
-            self.conn.write_selection(&text);
+            self.write_content(&content);
             return Ok(());
         }
 
@@ -91,24 +129,24 @@ impl<C: X11Connection> PasteSimulator<C> {
                 // backend: place the content on the clipboard and stop -
                 // clipboard-only fallback, the user completes the paste
                 // manually.
-                self.conn.write_selection(&text);
+                self.write_content(&content);
                 return Ok(());
             }
         };
 
-        self.conn.write_selection(&text);
+        self.write_content(&content);
         self.conn
             .synthesize_key(window, PASTE_KEY_BINDING)
             .map_err(PlatformError::Backend)?;
         Ok(())
     }
 
-    /// Places `text` on the clipboard only - no focused-window lookup, no
-    /// key synthesis. For callers that want to let the user paste manually
-    /// wherever they choose, rather than targeting whatever happens to be
-    /// focused right now (see `paste-simulation`'s copy-only mode).
-    pub fn copy_to_clipboard(&self, text: &str) {
-        self.conn.write_selection(text);
+    /// Places the clip's content on the clipboard only - no focused-window
+    /// lookup, no key synthesis. For callers that want to let the user paste
+    /// manually wherever they choose, rather than targeting whatever happens
+    /// to be focused right now (see `paste-simulation`'s copy-only mode).
+    pub fn copy_to_clipboard(&self, representations: &[ClipRepresentation], mode: PasteMode) {
+        self.write_content(&resolve_paste_content(representations, mode));
     }
 
     /// Like `simulate_paste`, but targets whichever window is currently
@@ -134,11 +172,84 @@ mod tests {
     fn copy_to_clipboard_writes_the_given_text_without_synthesizing_any_key() {
         let conn = FakeX11Connection::new();
         let simulator = PasteSimulator::new(conn);
+        let representations = vec![ClipRepresentation::new("text/plain", 0).with_text_value("hello")];
 
-        simulator.copy_to_clipboard("hello");
+        simulator.copy_to_clipboard(&representations, PasteMode::PlainText);
 
         let ops = simulator.conn.ops_log();
         assert_eq!(ops, vec![RecordedOp::WriteSelection("hello".to_string())]);
+    }
+
+    fn image_representation(dir: &std::path::Path, bytes: &[u8]) -> ClipRepresentation {
+        let blob_path = dir.join("clip.png");
+        std::fs::write(&blob_path, bytes).unwrap();
+        let mut repr = ClipRepresentation::new("image/png", 0);
+        repr.blob_path = Some(blob_path.to_string_lossy().into_owned());
+        repr.byte_size = bytes.len() as u64;
+        repr
+    }
+
+    #[test]
+    fn pasting_an_image_only_clip_writes_its_bytes_to_the_image_target_before_synthesizing_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = image_representation(dir.path(), b"fake png bytes");
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::new(conn);
+
+        simulator.simulate_paste(Some(1), &[image], PasteMode::Auto).unwrap();
+
+        let ops = simulator.conn.ops_log();
+        assert_eq!(
+            ops,
+            vec![
+                RecordedOp::WriteSelectionTarget("image/png".to_string(), b"fake png bytes".to_vec()),
+                RecordedOp::SynthesizeKey(1, "ctrl+v".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn clipboard_only_mode_writes_image_bytes_for_an_image_only_clip_instead_of_empty_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = image_representation(dir.path(), b"fake png bytes");
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::clipboard_only(conn);
+
+        simulator.simulate_paste(Some(1), &[image], PasteMode::Auto).unwrap();
+
+        let ops = simulator.conn.ops_log();
+        assert_eq!(ops, vec![RecordedOp::WriteSelectionTarget("image/png".to_string(), b"fake png bytes".to_vec())]);
+    }
+
+    #[test]
+    fn copy_to_clipboard_with_an_image_only_clip_writes_its_bytes_to_the_image_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = image_representation(dir.path(), b"fake png bytes");
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::new(conn);
+
+        simulator.copy_to_clipboard(&[image], PasteMode::Auto);
+
+        let ops = simulator.conn.ops_log();
+        assert_eq!(ops, vec![RecordedOp::WriteSelectionTarget("image/png".to_string(), b"fake png bytes".to_vec())]);
+    }
+
+    #[test]
+    fn a_clip_with_both_text_and_image_representations_still_prefers_pasting_the_text() {
+        // Matches `resolve_paste_text`'s existing preference order - an
+        // image alongside real text content (e.g. alt text) shouldn't
+        // suddenly switch what gets pasted.
+        let dir = tempfile::tempdir().unwrap();
+        let mut image = image_representation(dir.path(), b"fake png bytes");
+        image.ordinal = 1;
+        let text = ClipRepresentation::new("text/plain", 0).with_text_value("hello");
+        let conn = FakeX11Connection::new();
+        let simulator = PasteSimulator::new(conn);
+
+        simulator.simulate_paste(Some(1), &[text, image], PasteMode::Auto).unwrap();
+
+        let ops = simulator.conn.ops_log();
+        assert_eq!(ops[0], RecordedOp::WriteSelection("hello".to_string()));
     }
 
     #[test]
