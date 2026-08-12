@@ -53,6 +53,17 @@ require_cmd() {
 require_cmd cargo "install Rust via https://rustup.rs/"
 
 if [ "$INSTALL_DAEMON" = 1 ]; then
+  step "Stopping and removing any existing clipd installation"
+  # Must happen before the new binary is built/installed below: `cargo
+  # install --force` only overwrites the file on disk, it does not touch an
+  # already-running process, and starting the service further down is a
+  # no-op if it's already active. Without stopping it first, a previously
+  # running clipd keeps serving the OLD binary indefinitely after an
+  # upgrade - the new build silently never actually runs until someone
+  # notices and restarts it by hand.
+  systemctl --user stop clipd.service 2>/dev/null || true
+  cargo uninstall clipd 2>/dev/null || true
+
   step "Building and installing clipd + clip-hotkey-trigger onto \$PATH"
   cargo install --path crates/clipd --force
 
@@ -86,7 +97,13 @@ EOF
   fi
 
   systemctl --user daemon-reload
-  systemctl --user enable --now clipd.service
+  systemctl --user enable clipd.service
+  # `restart` rather than `enable --now`: `--now` only starts the unit if
+  # it isn't already active, which would silently no-op (and leave the old
+  # binary running) if the stop above somehow didn't take effect. `restart`
+  # unconditionally (re)launches it against the binary just installed,
+  # whether or not it was already running.
+  systemctl --user restart clipd.service
 
   step "clipd status"
   systemctl --user --no-pager status clipd.service || true

@@ -3,6 +3,7 @@
 
 mod client;
 mod commands;
+mod popup_position;
 mod sanitize;
 mod tray;
 
@@ -38,6 +39,19 @@ fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Moves the popup to wherever it was last dragged to, if anywhere - called
+/// both once at startup and again right before every show (see
+/// `Event::HotkeyPressed` below), rather than trusting the window to simply
+/// stay put, since it otherwise always reopens at the platform's default
+/// origin instead of remembering its position.
+fn restore_popup_position(app: &tauri::AppHandle) {
+    let Some(popup) = app.get_webview_window("popup") else { return };
+    let config_dir = clip_core::config::AppPaths::resolve().config_dir;
+    if let Some((x, y)) = popup_position::load(&config_dir) {
+        let _ = popup.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -96,6 +110,20 @@ pub fn run() {
                 }
             }
 
+            // Remembers wherever the popup gets dragged to (it has no native
+            // decorations, so the gripper's drag region - see `WindowGripper`
+            // in the frontend - is the only way it moves) so the next show
+            // can restore it instead of resetting to the platform default.
+            if let Some(popup) = app.get_webview_window("popup") {
+                popup.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Moved(position) = event {
+                        let config_dir = clip_core::config::AppPaths::resolve().config_dir;
+                        popup_position::save(&config_dir, (position.x, position.y));
+                    }
+                });
+            }
+            restore_popup_position(app.handle());
+
             // Loaded directly via `include_bytes!` (tracked by rustc as a
             // real compile dependency) rather than `app.default_window_icon()`
             // (backed by the `generate_context!()` macro's own icon
@@ -149,6 +177,7 @@ pub fn run() {
                     let _ = pause_item_for_events.set_text(tray::pause_menu_label(tray_state.inner()));
                 }
                 if let Event::HotkeyPressed = &event {
+                    restore_popup_position(&app_handle_for_events);
                     if let Some(popup) = app_handle_for_events.get_webview_window("popup") {
                         let _ = popup.show();
                         let _ = popup.set_focus();

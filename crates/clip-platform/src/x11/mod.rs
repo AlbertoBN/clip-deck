@@ -25,6 +25,11 @@ pub trait X11Connection: Send + Sync {
     /// Takes ownership of the selection and sets its text content.
     fn write_selection(&self, content: &str);
 
+    /// Takes ownership of the selection and sets its content for a specific
+    /// non-text target (e.g. `"image/png"`), so another client requesting
+    /// that exact target via `ConvertSelection` receives `bytes` back.
+    fn write_selection_target(&self, mime: &str, bytes: &[u8]);
+
     /// Drains one pending selection-change notification, if any are queued.
     /// Callers re-read via `read_selection` to see the resulting content.
     fn poll_selection_change(&self) -> Option<()>;
@@ -50,6 +55,7 @@ pub(crate) mod fake {
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) enum RecordedOp {
         WriteSelection(String),
+        WriteSelectionTarget(String, Vec<u8>),
         SynthesizeKey(WindowId, String),
     }
 
@@ -116,6 +122,12 @@ pub(crate) mod fake {
             let mut state = self.state.lock().unwrap();
             state.selection = Some(content.to_string());
             state.ops_log.push(RecordedOp::WriteSelection(content.to_string()));
+        }
+
+        fn write_selection_target(&self, mime: &str, bytes: &[u8]) {
+            let mut state = self.state.lock().unwrap();
+            state.selection_targets.insert(mime.to_string(), bytes.to_vec());
+            state.ops_log.push(RecordedOp::WriteSelectionTarget(mime.to_string(), bytes.to_vec()));
         }
 
         fn poll_selection_change(&self) -> Option<()> {

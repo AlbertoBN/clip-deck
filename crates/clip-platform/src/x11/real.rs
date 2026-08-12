@@ -45,10 +45,12 @@ impl Atoms {
 
 /// Content this process is currently offering as the `CLIPBOARD` selection
 /// owner, served to other clients' `SelectionRequest`s by the background
-/// event-pump thread.
+/// event-pump thread. `write_selection`/`write_selection_target` each clear
+/// the other field, since a given paste only ever offers one or the other.
 #[derive(Default)]
 struct OwnedContent {
     text: Option<String>,
+    image: Option<(Atom, Vec<u8>)>,
 }
 
 /// Real X11 connection: owns a hidden helper window used both as the
@@ -138,11 +140,15 @@ impl RealX11Connection {
                         let _ = tx.send(());
                     }
                     Event::SelectionRequest(request) if request.selection == pump_atoms_clipboard => {
-                        let content = pump_owned_content.lock().unwrap().text.clone();
+                        let owned = pump_owned_content.lock().unwrap();
+                        let text = owned.text.clone();
+                        let image = owned.image.clone();
+                        drop(owned);
                         let _ = respond_to_selection_request(
                             &pump_conn,
                             &request,
-                            content.as_deref(),
+                            text.as_deref(),
+                            image.as_ref().map(|(atom, bytes)| (*atom, bytes.as_slice())),
                             pump_atoms_utf8,
                             pump_atoms_targets,
                         );
@@ -170,19 +176,34 @@ impl RealX11Connection {
         }
         Some(String::from_utf8_lossy(&reply.value).into_owned())
     }
+
+    /// Claims `CLIPBOARD` ownership so the background event pump starts
+    /// receiving `SelectionRequest`s for whatever was just written into
+    /// `owned_content`.
+    fn claim_selection_ownership(&self) {
+        if let Ok(cookie) =
+            xproto::set_selection_owner(&self.conn, self.helper_window, self.atoms.clipboard, x11rb::CURRENT_TIME)
+        {
+            let _ = cookie.check();
+        }
+        let _ = self.conn.flush();
+    }
 }
 
 fn respond_to_selection_request(
     conn: &RustConnection,
     request: &xproto::SelectionRequestEvent,
-    content: Option<&str>,
+    text: Option<&str>,
+    image: Option<(Atom, &[u8])>,
     utf8_string: Atom,
     targets: Atom,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let property = if request.property == 0 { request.target } else { request.property };
+    let image_atom = image.map(|(atom, _)| atom);
 
     if request.target == targets {
-        let available = [utf8_string, targets];
+        let mut available = vec![utf8_string, targets];
+        available.extend(image_atom);
         let data: Vec<u8> = available.iter().flat_map(|a| a.to_ne_bytes()).collect();
         xproto::change_property(
             conn,
@@ -196,13 +217,26 @@ fn respond_to_selection_request(
         )?
         .check()?;
     } else if request.target == utf8_string {
-        let bytes = content.unwrap_or("").as_bytes();
+        let bytes = text.unwrap_or("").as_bytes();
         xproto::change_property(
             conn,
             PropMode::REPLACE,
             request.requestor,
             property,
             utf8_string,
+            8,
+            bytes.len() as u32,
+            bytes,
+        )?
+        .check()?;
+    } else if Some(request.target) == image_atom {
+        let bytes = image.map(|(_, bytes)| bytes).unwrap_or(&[]);
+        xproto::change_property(
+            conn,
+            PropMode::REPLACE,
+            request.requestor,
+            property,
+            request.target,
             8,
             bytes.len() as u32,
             bytes,
@@ -298,13 +332,21 @@ impl X11Connection for RealX11Connection {
     }
 
     fn write_selection(&self, content: &str) {
-        self.owned_content.lock().unwrap().text = Some(content.to_string());
-        if let Ok(cookie) =
-            xproto::set_selection_owner(&self.conn, self.helper_window, self.atoms.clipboard, x11rb::CURRENT_TIME)
-        {
-            let _ = cookie.check();
-        }
-        let _ = self.conn.flush();
+        let mut owned = self.owned_content.lock().unwrap();
+        owned.text = Some(content.to_string());
+        owned.image = None;
+        drop(owned);
+        self.claim_selection_ownership();
+    }
+
+    fn write_selection_target(&self, mime: &str, bytes: &[u8]) {
+        let Ok(cookie) = xproto::intern_atom(&self.conn, false, mime.as_bytes()) else { return };
+        let Ok(atom) = cookie.reply() else { return };
+        let mut owned = self.owned_content.lock().unwrap();
+        owned.text = None;
+        owned.image = Some((atom.atom, bytes.to_vec()));
+        drop(owned);
+        self.claim_selection_ownership();
     }
 
     fn poll_selection_change(&self) -> Option<()> {

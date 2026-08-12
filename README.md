@@ -69,9 +69,12 @@ The Cargo workspace is split into six crates:
 
 `scripts/install.sh` automates everything in
 [Installing `clipd` as a background daemon](#installing-clipd-as-a-background-daemon) and
-[Installing the desktop app](#installing-the-desktop-app) below in one step: it builds and
-installs `clipd`/`clip-hotkey-trigger` onto `$PATH`, writes and enables the systemd `--user`
-service, then builds the desktop app and installs it as a `.deb`.
+[Installing the desktop app](#installing-the-desktop-app) below in one step: it stops and
+uninstalls any existing `clipd` first, builds and installs `clipd`/`clip-hotkey-trigger` onto
+`$PATH`, writes/enables the systemd `--user` service and restarts it against the fresh build,
+then builds the desktop app and installs it as a `.deb`. Safe to re-run any time you pull new
+changes — it always ends with the currently-running daemon matching what's on disk, rather than
+silently leaving an old process running against a newer binary.
 
 ```sh
 ./scripts/install.sh

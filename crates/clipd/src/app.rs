@@ -199,8 +199,7 @@ impl Backend for X11DaemonBackend {
     }
 
     fn copy_to_clipboard(&self, representations: &[ClipRepresentation]) -> Result<(), PlatformError> {
-        let text = clip_platform::paste::resolve_paste_text(representations, PasteMode::PlainText).unwrap_or_default();
-        self.paste.copy_to_clipboard(&text);
+        self.paste.copy_to_clipboard(representations, PasteMode::PlainText);
         Ok(())
     }
 
