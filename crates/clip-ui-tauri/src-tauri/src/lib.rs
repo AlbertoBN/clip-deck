@@ -42,6 +42,22 @@ fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Forces this process's GTK windows onto XWayland rather than native
+    // Wayland, before GTK/GDK initialize (triggered by the first
+    // `tauri::Builder` call below). The tray's context menu is a legacy
+    // `GtkMenu` popup rendered by `libdbusmenu-gtk3` (behind
+    // `libayatana-appindicator3`), and GTK3's legacy popup-positioning code
+    // path is a long-documented gap under native Wayland - the usual
+    // symptom is exactly a menu with the right number of rows but every
+    // label failing to render. Routing through XWayland instead (the same
+    // path `clipd` already prefers for its own X11 connection) uses the
+    // well-tested code path. Only overrides this process's own environment,
+    // not the session-wide `GDK_BACKEND` a desktop environment may set.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GDK_BACKEND").is_none_or(|v| v == "wayland") {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
+
     tauri::Builder::default()
         .setup(|app| {
             let socket_path = clip_core::config::AppPaths::resolve().config_dir.join("clipd.sock");
